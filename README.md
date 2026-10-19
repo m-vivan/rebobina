@@ -71,6 +71,10 @@ Na raiz: `npm run build`.
 
 `~/Library/Application Support/gravador/`
 
+## Contribuindo
+
+Quer ajudar? Veja [CONTRIBUTING.md](CONTRIBUTING.md) para setup, branch, commits e expectativas de PR/CI.
+
 ## Licença
 
-MIT
+[MIT](LICENSE) — Copyright (c) 2026 Marivaldo Vivan
