@@ -52,6 +52,21 @@ const SCHEMA: &str = r#"
 
 fn apply_schema(conn: &Connection) -> AppResult<()> {
     conn.execute_batch(SCHEMA)?;
+    ensure_column(conn, "meetings", "description", "TEXT")?;
+    ensure_column(conn, "summaries", "details_json", "TEXT")?;
+    Ok(())
+}
+
+/// Adiciona a coluna se o banco foi criado antes dela existir.
+fn ensure_column(conn: &Connection, table: &str, column: &str, ty: &str) -> AppResult<()> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let exists = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .filter_map(Result::ok)
+        .any(|name| name == column);
+    if !exists {
+        conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {ty};"))?;
+    }
     Ok(())
 }
 
@@ -67,6 +82,8 @@ pub struct Meeting {
     pub status: String,
     pub error_message: Option<String>,
     pub device_name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,6 +106,9 @@ pub struct Summary {
     pub raw_markdown: String,
     pub model: String,
     pub created_at: String,
+    /// JSON completo do resumo estruturado (participantes, pontos-chave etc.).
+    #[serde(default)]
+    pub details_json: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -150,6 +170,7 @@ impl Storage {
             status: "recording".into(),
             error_message: None,
             device_name: device_name.map(|s| s.to_string()),
+            description: None,
         };
 
         let conn = self.conn.lock().unwrap();
@@ -187,6 +208,37 @@ impl Storage {
         Ok(())
     }
 
+    pub fn update_meeting_details(
+        &self,
+        meeting_id: &str,
+        title: &str,
+        description: Option<&str>,
+    ) -> AppResult<()> {
+        let title = title.trim();
+        if title.is_empty() {
+            return Err(AppError::Message("O nome da reunião não pode ficar vazio".into()));
+        }
+        let description = description.map(str::trim).filter(|d| !d.is_empty());
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute(
+            "UPDATE meetings SET title = ?1, description = ?2 WHERE id = ?3",
+            params![title, description, meeting_id],
+        )?;
+        if n == 0 {
+            return Err(AppError::Message("Reunião não encontrada".into()));
+        }
+        Ok(())
+    }
+
+    pub fn set_title(&self, meeting_id: &str, title: &str) -> AppResult<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE meetings SET title = ?1 WHERE id = ?2",
+            params![title, meeting_id],
+        )?;
+        Ok(())
+    }
+
     pub fn set_status(
         &self,
         meeting_id: &str,
@@ -204,24 +256,10 @@ impl Storage {
     pub fn get_meeting(&self, meeting_id: &str) -> AppResult<Option<Meeting>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, title, started_at, ended_at, duration_sec, audio_path, status, error_message, device_name
+            "SELECT id, title, started_at, ended_at, duration_sec, audio_path, status, error_message, device_name, description
              FROM meetings WHERE id = ?1",
         )?;
-        let meeting = stmt
-            .query_row(params![meeting_id], |row| {
-                Ok(Meeting {
-                    id: row.get(0)?,
-                    title: row.get(1)?,
-                    started_at: row.get(2)?,
-                    ended_at: row.get(3)?,
-                    duration_sec: row.get(4)?,
-                    audio_path: row.get(5)?,
-                    status: row.get(6)?,
-                    error_message: row.get(7)?,
-                    device_name: row.get(8)?,
-                })
-            })
-            .optional()?;
+        let meeting = stmt.query_row(params![meeting_id], map_meeting).optional()?;
         Ok(meeting)
     }
 
@@ -232,10 +270,10 @@ impl Storage {
         if let Some(q) = query.filter(|s| !s.trim().is_empty()) {
             let like = format!("%{}%", q.trim());
             let mut stmt = conn.prepare(
-                "SELECT DISTINCT m.id, m.title, m.started_at, m.ended_at, m.duration_sec, m.audio_path, m.status, m.error_message, m.device_name
+                "SELECT DISTINCT m.id, m.title, m.started_at, m.ended_at, m.duration_sec, m.audio_path, m.status, m.error_message, m.device_name, m.description
                  FROM meetings m
                  LEFT JOIN transcripts t ON t.meeting_id = m.id
-                 WHERE m.title LIKE ?1 OR IFNULL(t.full_text, '') LIKE ?1
+                 WHERE m.title LIKE ?1 OR IFNULL(m.description, '') LIKE ?1 OR IFNULL(t.full_text, '') LIKE ?1
                  ORDER BY m.started_at DESC",
             )?;
             let rows = stmt.query_map(params![like], map_meeting)?;
@@ -244,7 +282,7 @@ impl Storage {
             }
         } else {
             let mut stmt = conn.prepare(
-                "SELECT id, title, started_at, ended_at, duration_sec, audio_path, status, error_message, device_name
+                "SELECT id, title, started_at, ended_at, duration_sec, audio_path, status, error_message, device_name, description
                  FROM meetings ORDER BY started_at DESC",
             )?;
             let rows = stmt.query_map([], map_meeting)?;
@@ -293,8 +331,8 @@ impl Storage {
         conn.execute(
             "INSERT INTO summaries (
                 meeting_id, overview, decisions_json, action_items_json, topics_json,
-                notable_quotes_json, raw_markdown, model, created_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                notable_quotes_json, raw_markdown, model, created_at, details_json
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
              ON CONFLICT(meeting_id) DO UPDATE SET
                 overview = excluded.overview,
                 decisions_json = excluded.decisions_json,
@@ -303,7 +341,8 @@ impl Storage {
                 notable_quotes_json = excluded.notable_quotes_json,
                 raw_markdown = excluded.raw_markdown,
                 model = excluded.model,
-                created_at = excluded.created_at",
+                created_at = excluded.created_at,
+                details_json = excluded.details_json",
             params![
                 summary.meeting_id,
                 summary.overview,
@@ -313,7 +352,8 @@ impl Storage {
                 summary.notable_quotes_json,
                 summary.raw_markdown,
                 summary.model,
-                summary.created_at
+                summary.created_at,
+                summary.details_json
             ],
         )?;
         Ok(())
@@ -323,7 +363,7 @@ impl Storage {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT meeting_id, overview, decisions_json, action_items_json, topics_json,
-                    notable_quotes_json, raw_markdown, model, created_at
+                    notable_quotes_json, raw_markdown, model, created_at, details_json
              FROM summaries WHERE meeting_id = ?1",
         )?;
         let result = stmt
@@ -338,6 +378,7 @@ impl Storage {
                     raw_markdown: row.get(6)?,
                     model: row.get(7)?,
                     created_at: row.get(8)?,
+                    details_json: row.get(9)?,
                 })
             })
             .optional()?;
@@ -502,6 +543,7 @@ fn map_meeting(row: &rusqlite::Row<'_>) -> rusqlite::Result<Meeting> {
         status: row.get(6)?,
         error_message: row.get(7)?,
         device_name: row.get(8)?,
+        description: row.get(9)?,
     })
 }
 

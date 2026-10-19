@@ -35,6 +35,18 @@ pub fn mix_mono_wavs(system_path: &Path, mic_path: &Path, out_path: &Path) -> Ap
     let sys_samples = read_as_f32(&mut sys)?;
     let mic_samples = read_as_f32(&mut mic)?;
 
+    // Volume de cada faixa ao longo do tempo, para saber depois quem falou.
+    // Falha aqui não deve impedir a gravação de ser salva.
+    let levels = crate::speakers::SpeakerLevels::from_tracks(
+        &mic_samples,
+        mic_spec.sample_rate,
+        &sys_samples,
+        sys_spec.sample_rate,
+    );
+    if let Err(e) = levels.save(&crate::speakers::SpeakerLevels::path_for(out_path)) {
+        eprintln!("rebobina: não foi possível salvar níveis por faixa: {e}");
+    }
+
     let len = sys_samples.len().max(mic_samples.len());
     let mut mixed = Vec::with_capacity(len);
     for i in 0..len {

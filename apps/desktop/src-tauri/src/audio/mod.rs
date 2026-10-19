@@ -38,7 +38,13 @@ struct CaptureShared {
     mic_writer: Mutex<Option<WavWriter<std::io::BufWriter<std::fs::File>>>>,
     /// When true, mic samples come from ScreenCaptureKit (not cpal).
     sck_mic: AtomicBool,
-    peak: AtomicU64,
+    /// Pico de cada faixa desde a última leitura (zerado por `take_levels`).
+    mic_peak: AtomicU64,
+    system_peak: AtomicU64,
+    /// Amostras já gravadas em cada faixa, para manter as duas alinhadas
+    /// quando o microfone é trocado no meio da gravação.
+    mic_samples: AtomicU64,
+    system_samples: AtomicU64,
     stop: AtomicBool,
 }
 
@@ -56,11 +62,21 @@ impl SCStreamOutputTrait for CaptureHandler {
                 // Descartamos frames de vídeo (só precisamos do áudio do sistema).
             }
             SCStreamOutputType::Audio => {
-                write_pcm_mono(&self.shared.system_writer, &sample, &self.shared.peak);
+                write_pcm_mono(
+                    &self.shared.system_writer,
+                    &sample,
+                    &self.shared.system_peak,
+                    &self.shared.system_samples,
+                );
             }
             SCStreamOutputType::Microphone => {
                 if self.shared.sck_mic.load(Ordering::Relaxed) {
-                    write_pcm_mono(&self.shared.mic_writer, &sample, &self.shared.peak);
+                    write_pcm_mono(
+                        &self.shared.mic_writer,
+                        &sample,
+                        &self.shared.mic_peak,
+                        &self.shared.mic_samples,
+                    );
                 }
             }
         }
@@ -69,7 +85,9 @@ impl SCStreamOutputTrait for CaptureHandler {
 
 struct ActiveRecording {
     _stream: SCStream,
-    _mic_stream: Option<SendStream>,
+    /// O SCK também está capturando o microfone (macOS 15+), podendo servir de reserva.
+    sck_mic_available: bool,
+    mic_stream: Option<SendStream>,
     shared: Arc<CaptureShared>,
     started_at: Instant,
     meeting_id: String,
@@ -137,14 +155,15 @@ impl Recorder {
         self.active.lock().as_ref().map(|a| a.meeting_id.clone())
     }
 
-    pub fn peak_level(&self) -> f32 {
-        let bits = self
-            .active
-            .lock()
-            .as_ref()
-            .map(|a| a.shared.peak.load(Ordering::Relaxed))
-            .unwrap_or(0);
-        f32::from_bits(bits as u32)
+    /// Pico do microfone e do áudio da chamada desde a última chamada, e zera
+    /// os contadores para a próxima janela.
+    pub fn take_levels(&self) -> (f32, f32) {
+        let guard = self.active.lock();
+        let Some(active) = guard.as_ref() else {
+            return (0.0, 0.0);
+        };
+        let take = |peak: &AtomicU64| f32::from_bits(peak.swap(0, Ordering::Relaxed) as u32);
+        (take(&active.shared.mic_peak), take(&active.shared.system_peak))
     }
 
     pub fn start(
@@ -183,7 +202,10 @@ impl Recorder {
             system_writer: Mutex::new(Some(system_writer)),
             mic_writer: Mutex::new(Some(mic_writer)),
             sck_mic: AtomicBool::new(false),
-            peak: AtomicU64::new(0),
+            mic_peak: AtomicU64::new(0),
+            system_peak: AtomicU64::new(0),
+            mic_samples: AtomicU64::new(0),
+            system_samples: AtomicU64::new(0),
             stop: AtomicBool::new(false),
         });
 
@@ -219,6 +241,12 @@ impl Recorder {
             }
             Err(_) => false, // macOS < 15: microfone via cpal
         };
+        // O microfone do SCK é sempre o padrão do sistema (trocar o dispositivo dele
+        // com a captura rodando entrega só silêncio). Para outro microfone, usa cpal.
+        let wants_other_mic = device_name.is_some_and(|name| !is_default_input(name));
+        if wants_other_mic {
+            shared.sck_mic.store(false, Ordering::Relaxed);
+        }
 
         let mut stream =
             SCStream::new(&filter, &config).map_err(|e| AppError::Audio(format!("SCStream: {e}")))?;
@@ -265,7 +293,7 @@ impl Recorder {
             }
         })?;
 
-        let mic_stream = if use_sck_mic {
+        let mic_stream = if use_sck_mic && !wants_other_mic {
             None
         } else {
             Some(start_cpal_mic(
@@ -276,12 +304,13 @@ impl Recorder {
 
         eprintln!(
             "rebobina: ScreenCaptureKit ativo (system audio + mic via {})",
-            if use_sck_mic { "SCK" } else { "cpal" }
+            if shared.sck_mic.load(Ordering::Relaxed) { "SCK" } else { "cpal" }
         );
 
         *guard = Some(ActiveRecording {
             _stream: stream,
-            _mic_stream: mic_stream,
+            sck_mic_available: use_sck_mic,
+            mic_stream,
             shared,
             started_at: Instant::now(),
             meeting_id: meeting_id.to_string(),
@@ -291,6 +320,50 @@ impl Recorder {
         });
 
         Ok(())
+    }
+
+    /// Troca o microfone sem interromper a gravação. `None` volta ao padrão do sistema.
+    pub fn switch_microphone(&self, device_name: Option<&str>) -> AppResult<()> {
+        let mut guard = self.active.lock();
+        let active = guard
+            .as_mut()
+            .ok_or_else(|| AppError::Audio("Nenhuma gravação ativa".into()))?;
+        let shared = Arc::clone(&active.shared);
+
+        // Fecha o microfone atual (cpal) e ignora o do SCK enquanto o novo abre.
+        active.mic_stream = None;
+        shared.sck_mic.store(false, Ordering::Relaxed);
+
+        let use_sck = active.sck_mic_available
+            && device_name.map_or(true, is_default_input);
+        let result = if use_sck {
+            shared.sck_mic.store(true, Ordering::Relaxed);
+            Ok(())
+        } else {
+            match start_cpal_mic(device_name, Arc::clone(&shared)) {
+                Ok(stream) => {
+                    active.mic_stream = Some(stream);
+                    Ok(())
+                }
+                Err(e) => {
+                    // Melhor continuar com o microfone padrão do que ficar sem voz.
+                    if active.sck_mic_available {
+                        shared.sck_mic.store(true, Ordering::Relaxed);
+                    }
+                    Err(e)
+                }
+            }
+        };
+
+        pad_mic_to_system(&shared);
+        if result.is_ok() {
+            eprintln!(
+                "rebobina: microfone trocado para {} (via {})",
+                device_name.unwrap_or("o padrão do sistema"),
+                if use_sck { "SCK" } else { "cpal" }
+            );
+        }
+        result
     }
 
     pub fn stop(&self) -> AppResult<(String, PathBuf, i64)> {
@@ -308,7 +381,7 @@ impl Recorder {
 
         // Drop SCStream / cpal (para a captura)
         drop(active._stream);
-        drop(active._mic_stream);
+        drop(active.mic_stream);
 
         if let Some(w) = active.shared.system_writer.lock().take() {
             w.finalize()
@@ -332,6 +405,7 @@ fn write_pcm_mono(
     writer: &Mutex<Option<WavWriter<std::io::BufWriter<std::fs::File>>>>,
     sample: &CMSampleBuffer,
     peak: &AtomicU64,
+    written: &AtomicU64,
 ) {
     let Ok(list) = sample.audio_buffer_list() else {
         return;
@@ -397,10 +471,11 @@ fn write_pcm_mono(
     }
 
     if let Some(w) = writer.lock().as_mut() {
-        for s in mono_samples {
+        for &s in &mono_samples {
             let i = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
             let _ = w.write_sample(i);
         }
+        written.fetch_add(mono_samples.len() as u64, Ordering::Relaxed);
     }
 }
 
@@ -488,7 +563,12 @@ fn start_cpal_mic(
                             return;
                         }
                         let mono = downmix_and_resample_f32(data, channels, in_rate, SAMPLE_RATE);
-                        write_i16_mono(&shared_cb.mic_writer, &mono, &shared_cb.peak);
+                        write_i16_mono(
+                            &shared_cb.mic_writer,
+                            &mono,
+                            &shared_cb.mic_peak,
+                            &shared_cb.mic_samples,
+                        );
                     },
                     err_fn,
                     None,
@@ -506,7 +586,12 @@ fn start_cpal_mic(
                         }
                         let f: Vec<f32> = data.iter().map(|&s| s as f32 / i16::MAX as f32).collect();
                         let mono = downmix_and_resample_f32(&f, channels, in_rate, SAMPLE_RATE);
-                        write_i16_mono(&shared_cb.mic_writer, &mono, &shared_cb.peak);
+                        write_i16_mono(
+                            &shared_cb.mic_writer,
+                            &mono,
+                            &shared_cb.mic_peak,
+                            &shared_cb.mic_samples,
+                        );
                     },
                     err_fn,
                     None,
@@ -530,6 +615,7 @@ fn write_i16_mono(
     writer: &Mutex<Option<WavWriter<std::io::BufWriter<std::fs::File>>>>,
     samples: &[f32],
     peak: &AtomicU64,
+    written: &AtomicU64,
 ) {
     let mut max_amp = 0f32;
     if let Some(w) = writer.lock().as_mut() {
@@ -538,6 +624,7 @@ fn write_i16_mono(
             let i = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
             let _ = w.write_sample(i);
         }
+        written.fetch_add(samples.len() as u64, Ordering::Relaxed);
     }
     if max_amp > 0.0 {
         let prev = f32::from_bits(peak.load(Ordering::Relaxed) as u32);
@@ -565,9 +652,74 @@ fn downmix_and_resample_f32(
     resample_linear(&mono, in_rate, out_rate)
 }
 
+/// Se o nome é o microfone padrão do sistema (o que o SCK captura).
+fn is_default_input(name: &str) -> bool {
+    cpal::default_host()
+        .default_input_device()
+        .and_then(|d| d.name().ok())
+        .is_some_and(|default| default == name)
+}
+
+/// Completa a faixa do microfone com silêncio até o tamanho da faixa do sistema.
+/// A troca de microfone deixa uma pequena pausa; sem isso a voz ficaria
+/// adiantada em relação à chamada na mixagem final.
+fn pad_mic_to_system(shared: &CaptureShared) {
+    let system = shared.system_samples.load(Ordering::Relaxed);
+    let mic = shared.mic_samples.load(Ordering::Relaxed);
+    let missing = system.saturating_sub(mic);
+    // Mais de 10 s de diferença indica outro problema; não preenche às cegas.
+    if missing == 0 || missing > SAMPLE_RATE as u64 * 10 {
+        return;
+    }
+    if let Some(w) = shared.mic_writer.lock().as_mut() {
+        for _ in 0..missing {
+            let _ = w.write_sample(0i16);
+        }
+        shared.mic_samples.fetch_add(missing, Ordering::Relaxed);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pads_mic_track_after_switching_microphone() {
+        let dir = std::env::temp_dir().join(format!("rebobina-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let spec = WavSpec {
+            channels: 1,
+            sample_rate: SAMPLE_RATE,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mic_path = dir.join("mic.wav");
+        let shared = CaptureShared {
+            system_writer: Mutex::new(None),
+            mic_writer: Mutex::new(Some(WavWriter::create(&mic_path, spec).unwrap())),
+            sck_mic: AtomicBool::new(false),
+            mic_peak: AtomicU64::new(0),
+            system_peak: AtomicU64::new(0),
+            mic_samples: AtomicU64::new(0),
+            system_samples: AtomicU64::new(0),
+            stop: AtomicBool::new(false),
+        };
+
+        // Microfone gravou 1 s, sistema 1,5 s: a pausa da troca vira silêncio.
+        write_i16_mono(&shared.mic_writer, &vec![0.1; 48_000], &shared.mic_peak, &shared.mic_samples);
+        shared.system_samples.store(72_000, Ordering::Relaxed);
+        pad_mic_to_system(&shared);
+        assert_eq!(shared.mic_samples.load(Ordering::Relaxed), 72_000);
+
+        // Diferença absurda (> 10 s) não é preenchida.
+        shared.system_samples.store(72_000 + 48_000 * 20, Ordering::Relaxed);
+        pad_mic_to_system(&shared);
+        assert_eq!(shared.mic_samples.load(Ordering::Relaxed), 72_000);
+
+        shared.mic_writer.lock().take().unwrap().finalize().unwrap();
+        assert_eq!(hound::WavReader::open(&mic_path).unwrap().duration(), 72_000);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn lists_input_devices_on_macos() {

@@ -34,8 +34,14 @@ export const api = {
       deviceName: deviceName ?? null,
     }),
   stopRecording: () => invoke<Meeting>("stop_recording"),
+  switchMicrophone: (deviceName: string | null) =>
+    invoke<void>("switch_microphone", { deviceName }),
   retryProcessing: (meetingId: string) =>
     invoke<void>("retry_processing", { meetingId }),
+  updateMeeting: (meetingId: string, title: string, description: string | null) =>
+    invoke<Meeting>("update_meeting", { meetingId, title, description }),
+  regenerateSummary: (meetingId: string) =>
+    invoke<void>("regenerate_summary", { meetingId }),
   exportMeetingMarkdown: (meetingId: string) =>
     invoke<string>("export_meeting_markdown", { meetingId }),
   saveExportFile: (meetingId: string) =>
