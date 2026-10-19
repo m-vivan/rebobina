@@ -265,7 +265,7 @@ impl Recorder {
         };
 
         eprintln!(
-            "gravador: ScreenCaptureKit ativo (system audio + mic via {})",
+            "rebobina: ScreenCaptureKit ativo (system audio + mic via {})",
             if use_sck_mic { "SCK" } else { "cpal" }
         );
 

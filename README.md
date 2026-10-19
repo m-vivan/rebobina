@@ -12,7 +12,7 @@ Captura **microfone + áudio do sistema** via ScreenCaptureKit — sem bot na ca
 - **Tipografia:** Archivo Expanded Black (títulos) · Figtree (texto) · VT323 (contador) · Caveat (títulos das fitas)
 - **Arquivos:** [`brand/`](brand/) — símbolo, ícone e guia de identidade (`rebobina-identidade.html`)
 
-Os identificadores internos continuam `gravador` (bundle `com.vivan.gravador`, pasta de dados, keychain), para manter as gravações e permissões já existentes.
+Os identificadores de bundle/keychain continuam `com.vivan.gravador` (permissões TCC e API key já salvas). A pasta de dados passou a ser `rebobina` — na primeira abertura o app migra automaticamente de `~/Library/Application Support/gravador/` se existir.
 
 ## Requisitos
 
@@ -56,9 +56,29 @@ Artefatos:
 - `apps/desktop/src-tauri/target/release/bundle/dmg/Rebobina_*.dmg`
 - `apps/desktop/src-tauri/target/release/bundle/macos/Rebobina.app`
 
-Abra o `.dmg` e arraste **Rebobina** para Aplicativos. Na primeira abertura (app não assinado): clique direito → Abrir. Autorize **Gravação de tela**, **Microfone** e **Notificações**.
+Abra o `.dmg` e arraste **Rebobina** para Aplicativos. Na primeira abertura (app não assinado / ad-hoc): clique direito → Abrir. Autorize **Gravação de tela**, **Microfone** e **Notificações**.
 
 Na raiz: `npm run build`.
+
+## Releases (download do instalador)
+
+O instalador `.dmg` é publicado em [Releases](../../releases) pelo workflow **Release** (`.github/workflows/release.yml`).
+
+### Como publicar uma versão
+
+1. Atualize a versão em `apps/desktop/src-tauri/tauri.conf.json` (e `package.json` se quiser alinhar).
+2. Crie e envie uma tag:
+
+   ```bash
+   git tag v0.1.0
+   git push origin v0.1.0
+   ```
+
+   Ou: Actions → **Release** → **Run workflow** e informe a tag (ex. `v0.1.0`).
+
+3. Aguarde o job macOS; o DMG aparece nos assets da release.
+
+Assinatura Apple é **opcional**. Sem secrets, o build usa assinatura ad-hoc. Secrets opcionais: `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `KEYCHAIN_PASSWORD`, e para notarizar `APPLE_ID` + `APPLE_PASSWORD` + `APPLE_TEAM_ID` (ou API key App Store Connect). Detalhes em [CONTRIBUTING.md](CONTRIBUTING.md#publicar-uma-release).
 
 ## Uso
 
@@ -69,7 +89,9 @@ Na raiz: `npm run build`.
 
 ## Dados locais
 
-`~/Library/Application Support/gravador/`
+`~/Library/Application Support/rebobina/`
+
+(Se você usava a pasta antiga `gravador`, ela é migrada automaticamente na primeira abertura.)
 
 ## Contribuindo
 

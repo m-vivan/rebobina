@@ -260,7 +260,7 @@ mod tests {
 
     #[test]
     fn splits_long_wav_into_multiple_chunks() {
-        let dir = std::env::temp_dir().join(format!("gravador-test-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("rebobina-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("long.wav");
 

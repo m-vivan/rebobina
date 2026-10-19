@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { BlackHoleStatus } from "../types";
 
-const DISMISS_KEY = "gravador.blackhole.dismissed";
+const DISMISS_KEY = "rebobina.blackhole.dismissed";
 
 export function BlackHoleSetup() {
   const [status, setStatus] = useState<BlackHoleStatus | null>(null);

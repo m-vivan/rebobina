@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { ScreenPermissionStatus } from "../types";
 
-const DISMISS_KEY = "gravador.screen.dismissed";
+const DISMISS_KEY = "rebobina.screen.dismissed";
 
 export function ScreenPermissionSetup() {
   const [status, setStatus] = useState<ScreenPermissionStatus | null>(null);

@@ -100,7 +100,7 @@ mod tests {
 
     #[test]
     fn mixes_two_wavs() {
-        let dir = std::env::temp_dir().join(format!("gravador-mix-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("rebobina-mix-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let a = dir.join("a.wav");
         let b = dir.join("b.wav");

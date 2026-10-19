@@ -80,6 +80,34 @@ cd apps/desktop/src-tauri && cargo test
 3. Aguarde o CI (build do frontend + `cargo test` no macOS). Corrija falhas se aparecerem.
 4. Um mantenedor revisará e fará o merge quando estiver ok.
 
+## Publicar uma release
+
+O CD (`.github/workflows/release.yml`) gera o DMG universal macOS e anexa a uma [GitHub Release](../../releases).
+
+```bash
+# 1) Ajuste a versão em apps/desktop/src-tauri/tauri.conf.json
+# 2) Tag + push
+git checkout main && git pull
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Alternativa: Actions → **Release** → **Run workflow** (informe a tag, ex. `v0.1.0`).
+
+Artefatos tipicamente publicados: `Rebobina_<versão>_*.dmg` (e metadados do bundle Tauri).
+
+### Assinatura / notarização (opcional)
+
+Sem secrets o build ainda publica o DMG com assinatura **ad-hoc** (`signingIdentity: "-"`).
+
+| Secret | Função |
+|--------|--------|
+| `APPLE_CERTIFICATE` | `.p12` em base64 (Developer ID Application) |
+| `APPLE_CERTIFICATE_PASSWORD` | Senha do `.p12` |
+| `KEYCHAIN_PASSWORD` | Senha da keychain temporária no CI |
+| `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID` | Notarização via Apple ID |
+| `APPLE_API_ISSUER` / `APPLE_API_KEY` / `APPLE_API_KEY_PATH` | Notarização via App Store Connect API |
+
 ## Licença
 
 Ao contribuir, você concorda que suas contribuições serão licenciadas sob a [MIT License](LICENSE) do projeto (Copyright Marivaldo Vivan).
