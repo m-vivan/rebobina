@@ -15,6 +15,46 @@ const LEGACY_DATA_DIR_NAME: &str = "gravador";
 const DB_FILE_NAME: &str = "rebobina.db";
 const LEGACY_DB_FILE_NAME: &str = "gravador.db";
 
+const SCHEMA: &str = r#"
+            PRAGMA foreign_keys = ON;
+            CREATE TABLE IF NOT EXISTS meetings (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                ended_at TEXT,
+                duration_sec INTEGER,
+                audio_path TEXT,
+                status TEXT NOT NULL,
+                error_message TEXT,
+                device_name TEXT
+            );
+            CREATE TABLE IF NOT EXISTS transcripts (
+                meeting_id TEXT PRIMARY KEY REFERENCES meetings(id) ON DELETE CASCADE,
+                full_text TEXT NOT NULL,
+                segments_json TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS summaries (
+                meeting_id TEXT PRIMARY KEY REFERENCES meetings(id) ON DELETE CASCADE,
+                overview TEXT NOT NULL,
+                decisions_json TEXT NOT NULL,
+                action_items_json TEXT NOT NULL,
+                topics_json TEXT NOT NULL,
+                notable_quotes_json TEXT NOT NULL,
+                raw_markdown TEXT NOT NULL,
+                model TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            "#;
+
+fn apply_schema(conn: &Connection) -> AppResult<()> {
+    conn.execute_batch(SCHEMA)?;
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Meeting {
@@ -76,42 +116,7 @@ impl Storage {
 
         let db_path = resolve_db_path(&data_dir)?;
         let conn = Connection::open(&db_path)?;
-        conn.execute_batch(
-            r#"
-            PRAGMA foreign_keys = ON;
-            CREATE TABLE IF NOT EXISTS meetings (
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                started_at TEXT NOT NULL,
-                ended_at TEXT,
-                duration_sec INTEGER,
-                audio_path TEXT,
-                status TEXT NOT NULL,
-                error_message TEXT,
-                device_name TEXT
-            );
-            CREATE TABLE IF NOT EXISTS transcripts (
-                meeting_id TEXT PRIMARY KEY REFERENCES meetings(id) ON DELETE CASCADE,
-                full_text TEXT NOT NULL,
-                segments_json TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS summaries (
-                meeting_id TEXT PRIMARY KEY REFERENCES meetings(id) ON DELETE CASCADE,
-                overview TEXT NOT NULL,
-                decisions_json TEXT NOT NULL,
-                action_items_json TEXT NOT NULL,
-                topics_json TEXT NOT NULL,
-                notable_quotes_json TEXT NOT NULL,
-                raw_markdown TEXT NOT NULL,
-                model TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );
-            "#,
-        )?;
+        apply_schema(&conn)?;
 
         rewrite_legacy_audio_paths(&conn, &data_dir)?;
 
@@ -504,10 +509,26 @@ fn map_meeting(row: &rusqlite::Row<'_>) -> rusqlite::Result<Meeting> {
 fn resolve_data_dir() -> AppResult<PathBuf> {
     let base = dirs::data_dir()
         .ok_or_else(|| AppError::Message("Não foi possível resolver o diretório de dados".into()))?;
+    migrate_legacy_data(&base)
+}
+
+/// Leva os dados de `base/gravador` para `base/rebobina`.
+///
+/// - Só a pasta antiga existe: renomeia (ou copia, entre volumes).
+/// - As duas existem (ex.: o app instalado criou `rebobina/` e um build antigo
+///   continuou gravando em `gravador/`): junta as reuniões da antiga na nova
+///   e guarda a antiga como `gravador.migrado-<data>`, sem apagar nada.
+///
+/// Depois da migração a pasta antiga deixa de existir, então rodar de novo não faz nada.
+fn migrate_legacy_data(base: &Path) -> AppResult<PathBuf> {
     let new_dir = base.join(APP_DATA_DIR_NAME);
     let old_dir = base.join(LEGACY_DATA_DIR_NAME);
 
-    if !new_dir.exists() && old_dir.exists() {
+    if !old_dir.exists() {
+        return Ok(new_dir);
+    }
+
+    if !new_dir.exists() {
         match fs::rename(&old_dir, &new_dir) {
             Ok(()) => {
                 eprintln!(
@@ -531,9 +552,86 @@ fn resolve_data_dir() -> AppResult<PathBuf> {
                 }
             }
         }
+        return Ok(new_dir);
     }
 
+    merge_legacy_dir(&old_dir, &new_dir)?;
+
+    let stamp = Utc::now().format("%Y%m%d-%H%M%S");
+    let archived = base.join(format!("{LEGACY_DATA_DIR_NAME}.migrado-{stamp}"));
+    fs::rename(&old_dir, &archived)?;
+    eprintln!(
+        "rebobina: juntou {:?} em {:?}; pasta antiga guardada em {:?}",
+        old_dir, new_dir, archived
+    );
     Ok(new_dir)
+}
+
+/// Importa para `new_dir` as reuniões de `old_dir` que ainda não existem lá:
+/// linhas do banco (reuniões, transcrições, resumos e configurações ausentes)
+/// e as pastas de áudio. O que já existe na pasta nova nunca é sobrescrito.
+fn merge_legacy_dir(old_dir: &Path, new_dir: &Path) -> AppResult<()> {
+    let old_db = [LEGACY_DB_FILE_NAME, DB_FILE_NAME]
+        .iter()
+        .map(|name| old_dir.join(name))
+        .find(|p| p.exists());
+
+    if let Some(old_db) = old_db {
+        let conn = Connection::open(resolve_db_path(new_dir)?)?;
+        apply_schema(&conn)?;
+        let old_db = old_db
+            .to_str()
+            .ok_or_else(|| AppError::Message("Caminho do banco antigo inválido".into()))?;
+        conn.execute("ATTACH DATABASE ?1 AS legacy", params![old_db])?;
+        let imported = conn.execute_batch(
+            r#"
+            BEGIN;
+            INSERT OR IGNORE INTO meetings
+                (id, title, started_at, ended_at, duration_sec, audio_path, status, error_message, device_name)
+                SELECT id, title, started_at, ended_at, duration_sec, audio_path, status, error_message, device_name
+                FROM legacy.meetings;
+            INSERT OR IGNORE INTO transcripts (meeting_id, full_text, segments_json)
+                SELECT meeting_id, full_text, segments_json FROM legacy.transcripts
+                WHERE meeting_id IN (SELECT id FROM meetings);
+            INSERT OR IGNORE INTO summaries
+                (meeting_id, overview, decisions_json, action_items_json, topics_json,
+                 notable_quotes_json, raw_markdown, model, created_at)
+                SELECT meeting_id, overview, decisions_json, action_items_json, topics_json,
+                       notable_quotes_json, raw_markdown, model, created_at
+                FROM legacy.summaries
+                WHERE meeting_id IN (SELECT id FROM meetings);
+            INSERT OR IGNORE INTO settings (key, value) SELECT key, value FROM legacy.settings;
+            COMMIT;
+            "#,
+        );
+        if let Err(e) = imported {
+            let _ = conn.execute_batch("ROLLBACK;");
+            return Err(e.into());
+        }
+        conn.execute("DETACH DATABASE legacy", [])?;
+        rewrite_legacy_audio_paths(&conn, new_dir)?;
+    }
+
+    let old_meetings = old_dir.join("meetings");
+    if old_meetings.exists() {
+        let new_meetings = new_dir.join("meetings");
+        fs::create_dir_all(&new_meetings)?;
+        for entry in fs::read_dir(&old_meetings)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+            let target = new_meetings.join(entry.file_name());
+            if target.exists() {
+                continue;
+            }
+            if fs::rename(entry.path(), &target).is_err() {
+                copy_dir_recursive(&entry.path(), &target)?;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn resolve_db_path(data_dir: &Path) -> AppResult<PathBuf> {
@@ -581,4 +679,141 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> AppResult<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_base() -> PathBuf {
+        let base = std::env::temp_dir().join(format!("rebobina-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&base).unwrap();
+        base
+    }
+
+    /// Cria uma pasta de dados com um banco e uma reunião (com áudio e transcrição).
+    fn seed(dir: &Path, db_name: &str, meeting_id: &str, title: &str) {
+        let meeting_dir = dir.join("meetings").join(meeting_id);
+        fs::create_dir_all(&meeting_dir).unwrap();
+        let audio = meeting_dir.join("audio.wav");
+        fs::write(&audio, b"RIFF").unwrap();
+
+        let conn = Connection::open(dir.join(db_name)).unwrap();
+        apply_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO meetings (id, title, started_at, audio_path, status) VALUES (?1, ?2, ?3, ?4, 'ready')",
+            params![meeting_id, title, "2026-10-19T18:00:00Z", audio.to_str().unwrap()],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO transcripts (meeting_id, full_text, segments_json) VALUES (?1, ?2, '[]')",
+            params![meeting_id, format!("texto de {title}")],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('language', ?1)",
+            params![if db_name == LEGACY_DB_FILE_NAME { "en" } else { "pt" }],
+        )
+        .unwrap();
+    }
+
+    fn archived_dirs(base: &Path) -> Vec<PathBuf> {
+        fs::read_dir(base)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("gravador.migrado-"))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn renames_legacy_dir_when_new_one_is_missing() {
+        let base = temp_base();
+        seed(&base.join("gravador"), LEGACY_DB_FILE_NAME, "a", "Antiga");
+
+        let dir = migrate_legacy_data(&base).unwrap();
+
+        assert_eq!(dir, base.join("rebobina"));
+        assert!(!base.join("gravador").exists());
+        assert!(dir.join("meetings/a/audio.wav").exists());
+        assert!(archived_dirs(&base).is_empty());
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn merges_legacy_dir_into_existing_new_dir() {
+        let base = temp_base();
+        let old_dir = base.join("gravador");
+        let new_dir = base.join("rebobina");
+        seed(&old_dir, LEGACY_DB_FILE_NAME, "a", "Antiga");
+        seed(&new_dir, DB_FILE_NAME, "b", "Nova");
+
+        let dir = migrate_legacy_data(&base).unwrap();
+        assert_eq!(dir, new_dir);
+
+        let conn = Connection::open(new_dir.join(DB_FILE_NAME)).unwrap();
+        let mut stmt = conn
+            .prepare("SELECT m.id, m.audio_path, t.full_text FROM meetings m JOIN transcripts t ON t.meeting_id = m.id ORDER BY m.id")
+            .unwrap();
+        let rows: Vec<(String, String, String)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].0, "a");
+        assert_eq!(rows[0].2, "texto de Antiga");
+        assert!(rows[0].1.contains("/rebobina/meetings/a/"), "{}", rows[0].1);
+        assert!(new_dir.join("meetings/a/audio.wav").exists());
+
+        // A configuração que já existia na pasta nova é mantida.
+        let language: String = conn
+            .query_row("SELECT value FROM settings WHERE key = 'language'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(language, "pt");
+
+        // A pasta antiga não é apagada: fica guardada com outro nome.
+        assert!(!old_dir.exists());
+        let archived = archived_dirs(&base);
+        assert_eq!(archived.len(), 1);
+        assert!(archived[0].join(LEGACY_DB_FILE_NAME).exists());
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn merge_is_a_no_op_on_second_run() {
+        let base = temp_base();
+        seed(&base.join("gravador"), LEGACY_DB_FILE_NAME, "a", "Antiga");
+        seed(&base.join("rebobina"), DB_FILE_NAME, "b", "Nova");
+
+        migrate_legacy_data(&base).unwrap();
+        migrate_legacy_data(&base).unwrap();
+
+        let conn = Connection::open(base.join("rebobina").join(DB_FILE_NAME)).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM meetings", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(archived_dirs(&base).len(), 1);
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn never_overwrites_meeting_that_exists_in_both() {
+        let base = temp_base();
+        seed(&base.join("gravador"), LEGACY_DB_FILE_NAME, "x", "Versão antiga");
+        seed(&base.join("rebobina"), DB_FILE_NAME, "x", "Versão nova");
+
+        migrate_legacy_data(&base).unwrap();
+
+        let conn = Connection::open(base.join("rebobina").join(DB_FILE_NAME)).unwrap();
+        let title: String = conn
+            .query_row("SELECT title FROM meetings WHERE id = 'x'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(title, "Versão nova");
+        let _ = fs::remove_dir_all(base);
+    }
 }
