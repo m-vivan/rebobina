@@ -5,6 +5,7 @@ name: Release
 #
 # Sem secrets Apple: assinatura ad-hoc (signingIdentity "-" no tauri.conf).
 # Com secrets (opcional): certificado Developer ID + notarização.
+# Importante: NÃO passar APPLE_CERTIFICATE vazio ao Tauri — ele tenta importar e falha.
 
 on:
   push:
@@ -75,20 +76,28 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Import Apple certificate (optional)
+      - name: Detect Apple signing secrets
         id: signing
+        working-directory: ${{ github.workspace }}
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+        run: |
+          if [ -n "${APPLE_CERTIFICATE:-}" ]; then
+            echo "mode=signed" >> "$GITHUB_OUTPUT"
+            echo "Certificado Apple presente — build assinado."
+          else
+            echo "mode=adhoc" >> "$GITHUB_OUTPUT"
+            echo "Sem APPLE_CERTIFICATE — build ad-hoc (não passar env APPLE_CERTIFICATE ao Tauri)."
+          fi
+
+      - name: Import Apple certificate
+        if: steps.signing.outputs.mode == 'signed'
         working-directory: ${{ github.workspace }}
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
-          if [ -z "${APPLE_CERTIFICATE:-}" ]; then
-            echo "mode=adhoc" >> "$GITHUB_OUTPUT"
-            echo "APPLE_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
-            echo "Sem APPLE_CERTIFICATE — build com assinatura ad-hoc."
-            exit 0
-          fi
           echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
           KEYCHAIN_PASSWORD="${KEYCHAIN_PASSWORD:-build-keychain-pass}"
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
@@ -99,16 +108,37 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
           CERT_ID=$(security find-identity -v -p codesigning build.keychain | awk -F'"' '/Developer ID Application|Apple Distribution|Apple Development/{print $2; exit}')
           if [ -z "$CERT_ID" ]; then
-            echo "Certificado importado, mas identidade não encontrada — fallback ad-hoc."
-            echo "mode=adhoc" >> "$GITHUB_OUTPUT"
-            echo "APPLE_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
-            exit 0
+            echo "::error::Certificado importado, mas identidade de codesign não encontrada."
+            exit 1
           fi
           echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> "$GITHUB_ENV"
-          echo "mode=signed" >> "$GITHUB_OUTPUT"
           echo "Usando identidade: $CERT_ID"
 
-      - name: Build and publish (Tauri)
+      # --- ad-hoc: NÃO definir APPLE_CERTIFICATE / PASSWORD (mesmo vazios) ---
+      - name: Build and publish (ad-hoc)
+        if: steps.signing.outputs.mode == 'adhoc'
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: "-"
+          DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ steps.meta.outputs.tag }}
+          releaseName: Rebobina ${{ steps.meta.outputs.tag }}
+          releaseBody: |
+            Instalador macOS do Rebobina.
+
+            - Artefato: `Rebobina_*.dmg`
+            - Build **universal** (Apple Silicon + Intel)
+            - Assinatura **ad-hoc** (sem certificado Apple no CI) — na 1ª abertura: clique direito → Abrir
+            - Autorize **Gravação de tela**, **Microfone** e **Notificações**
+          releaseDraft: false
+          prerelease: false
+          args: --target universal-apple-darwin
+
+      - name: Build and publish (signed)
+        if: steps.signing.outputs.mode == 'signed'
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -127,14 +157,10 @@ jobs:
           tagName: ${{ steps.meta.outputs.tag }}
           releaseName: Rebobina ${{ steps.meta.outputs.tag }}
           releaseBody: |
-            Instalador macOS do Rebobina.
+            Instalador macOS do Rebobina (assinado).
 
-            - Artefato: `Rebobina_*.dmg` (e `.app` no bundle)
-            - App macOS-only (ScreenCaptureKit); sem builds Windows/Linux
-            - Sem certificado Apple no CI: assinatura **ad-hoc** — na 1ª abertura use clique direito → Abrir
-            - Com secrets `APPLE_*`: build assinado (e notarizado se `APPLE_ID`/`APPLE_PASSWORD`/`APPLE_TEAM_ID` ou API key estiverem definidos)
-
-            Após instalar, autorize **Gravação de tela**, **Microfone** e **Notificações**.
+            - Artefato: `Rebobina_*.dmg`
+            - Build **universal** (Apple Silicon + Intel)
           releaseDraft: false
           prerelease: false
           args: --target universal-apple-darwin
