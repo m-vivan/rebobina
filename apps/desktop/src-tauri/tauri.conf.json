@@ -43,6 +43,8 @@
     "macOS": {
       "minimumSystemVersion": "13.0",
       "infoPlist": "Info.plist",
+      "entitlements": "Entitlements.plist",
+      "hardenedRuntime": true,
       "signingIdentity": "-",
       "dmg": {
         "appPosition": { "x": 180, "y": 170 },

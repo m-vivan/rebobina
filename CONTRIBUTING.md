@@ -111,6 +111,34 @@ toggle ligado em Ajustes. Para gravar reuniões de verdade, configure o certific
 | `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID` | Notarização via Apple ID (recomendado) |
 | `APPLE_API_ISSUER` / `APPLE_API_KEY` / `APPLE_API_KEY_PATH` | Notarização via App Store Connect API |
 
+#### Como obter o certificado e configurar
+
+1. Entre no [Apple Developer Program](https://developer.apple.com/programs/) (pago, anual). Conta pessoal serve.
+2. No Xcode → **Settings → Accounts**, selecione a conta → **Manage Certificates** → **+** → **Developer ID Application**.
+3. No app **Acesso às Chaves**, em *Meus Certificados*, exporte o certificado "Developer ID Application: …" (com a chave privada) como `.p12` e defina uma senha.
+4. Gere o base64 e copie:
+
+   ```bash
+   base64 -i certificado.p12 | pbcopy
+   ```
+
+5. Em [appleid.apple.com](https://appleid.apple.com) → **Senhas de app**, crie uma senha para a notarização.
+6. Em **Settings → Secrets and variables → Actions** do repositório, crie:
+   `APPLE_CERTIFICATE` (o base64), `APPLE_CERTIFICATE_PASSWORD` (senha do `.p12`),
+   `KEYCHAIN_PASSWORD` (qualquer senha), `APPLE_ID` (seu e-mail da Apple),
+   `APPLE_PASSWORD` (a senha de app) e `APPLE_TEAM_ID` (em developer.apple.com → Membership).
+7. Publique uma nova tag. O workflow detecta o certificado, assina com a identidade Developer ID, notariza e publica o DMG.
+
+Com o app assinado, a permissão de Gravação de tela passa a valer entre versões
+(no ad-hoc ela fica presa ao hash de cada build e precisa ser liberada de novo).
+
+#### Entitlements
+
+O build usa **Hardened Runtime** (exigido pela notarização) com
+[`Entitlements.plist`](apps/desktop/src-tauri/Entitlements.plist). Ele declara
+`com.apple.security.device.audio-input`: sem isso o macOS entrega silêncio no
+microfone de um app com Hardened Runtime, sem mostrar o pedido de acesso.
+
 ## Licença
 
 Ao contribuir, você concorda que suas contribuições serão licenciadas sob a [MIT License](LICENSE) do projeto (Copyright Marivaldo Vivan).

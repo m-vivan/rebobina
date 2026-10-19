@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+		Com o Hardened Runtime ligado (exigido pela notarização da Apple), o
+		microfone só funciona com esta permissão declarada. Sem ela o macOS
+		entrega silêncio sem mostrar o pedido de acesso.
+		A Gravação de tela (ScreenCaptureKit) não precisa de entitlement:
+		depende só da permissão em Privacidade e Segurança.
+	-->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+</dict>
+</plist>
