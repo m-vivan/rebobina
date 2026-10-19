@@ -63,6 +63,11 @@ pub fn is_adhoc_signed() -> bool {
     false
 }
 
+/// Se o app já tem Gravação de tela, sem abrir o pedido do macOS.
+pub fn has_screen_permission() -> bool {
+    unsafe { CGPreflightScreenCaptureAccess() }
+}
+
 pub fn screen_permission_status() -> ScreenPermissionStatus {
     let granted = unsafe { CGPreflightScreenCaptureAccess() };
     let needs_relaunch = granted && !preflight_at_launch();

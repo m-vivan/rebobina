@@ -227,10 +227,22 @@ fn scan_processes() -> Vec<(String, String)> {
     hits
 }
 
+/// Ligado quando o SCK recusa a listagem de janelas: não tenta de novo até o
+/// app reiniciar, porque cada tentativa sem permissão reabre o pedido do macOS.
+static SCK_WINDOWS_BLOCKED: AtomicBool = AtomicBool::new(false);
+
 fn scan_windows_sck() -> Vec<DetectedCall> {
     use screencapturekit::prelude::*;
 
+    // Este scan roda a cada poucos segundos. Sem a permissão de Gravação de tela
+    // (ou com ela ligada para outra assinatura do app), chamar o SCK mostraria o
+    // pedido do macOS em loop. Nesse caso, detecta só pelos processos.
+    if SCK_WINDOWS_BLOCKED.load(Ordering::Relaxed) || !crate::audio::has_screen_permission() {
+        return Vec::new();
+    }
+
     let Ok(content) = SCShareableContent::get() else {
+        SCK_WINDOWS_BLOCKED.store(true, Ordering::Relaxed);
         return Vec::new();
     };
 
