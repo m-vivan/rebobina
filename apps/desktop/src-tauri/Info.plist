@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>O Gravador usa o microfone para gravar a sua voz nas reuniões.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>O Gravador usa a Gravação de tela apenas para capturar o áudio do sistema (Zoom, Meet, etc.), sem salvar vídeo.</string>
+	<key>NSUserNotificationsUsageDescription</key>
+	<string>O Gravador avisa quando detecta o início ou o fim de uma reunião para você gravar ou parar com um clique.</string>
+</dict>
+</plist>
+

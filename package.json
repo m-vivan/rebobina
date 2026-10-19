@@ -1,0 +1,11 @@
+{
+  "name": "gravador",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "npm --prefix apps/desktop run tauri:dev",
+    "build": "npm --prefix apps/desktop run tauri:build",
+    "desktop:dev": "npm --prefix apps/desktop run tauri:dev",
+    "desktop:build": "npm --prefix apps/desktop run tauri:build"
+  }
+}
