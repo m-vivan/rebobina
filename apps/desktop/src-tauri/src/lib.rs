@@ -4,6 +4,7 @@ mod error;
 mod meeting_detect;
 mod openai;
 mod pipeline;
+mod recovery;
 mod speakers;
 mod storage;
 
@@ -346,6 +347,21 @@ fn spawn_pipeline(app: AppHandle, storage: Arc<Storage>, meeting_id: String) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let storage = Arc::new(Storage::init().expect("falha ao inicializar storage"));
+
+    // Gravações que ficaram pela metade (app fechado ou caiu durante a gravação).
+    // A lista é lida agora, antes de existir gravação ativa; a mixagem roda depois.
+    match recovery::find_interrupted(&storage) {
+        Ok(stuck) if !stuck.is_empty() => {
+            let storage = Arc::clone(&storage);
+            std::thread::spawn(move || {
+                if let Err(e) = recovery::recover_interrupted(&storage, &stuck) {
+                    eprintln!("rebobina: falha ao recuperar gravações: {e}");
+                }
+            });
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("rebobina: falha ao procurar gravações interrompidas: {e}"),
+    }
     let state = AppState {
         storage,
         recorder: Recorder::new(),
