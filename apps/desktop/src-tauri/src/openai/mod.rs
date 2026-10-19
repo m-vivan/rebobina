@@ -4,6 +4,67 @@ use serde_json::json;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
+use std::thread;
+use std::time::Duration;
+
+/// Tempo máximo de uma transcrição: upload de ~19 MB mais o processamento de
+/// até 10 minutos de áudio. O padrão do reqwest (30 s) não é suficiente.
+const TRANSCRIBE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const SUMMARY_TIMEOUT: Duration = Duration::from_secs(3 * 60);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+/// Esperas entre tentativas em falhas passageiras (rede, 429, 5xx).
+const RETRY_DELAYS: [Duration; 2] = [Duration::from_secs(3), Duration::from_secs(10)];
+
+fn http_client(timeout: Duration) -> AppResult<reqwest::blocking::Client> {
+    reqwest::blocking::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(timeout)
+        .build()
+        .map_err(|e| AppError::Message(format!("Falha ao preparar a conexão: {e}")))
+}
+
+/// Envia a requisição e repete em falhas passageiras. Devolve status e corpo.
+fn send_with_retry(
+    service: &str,
+    mut build: impl FnMut() -> AppResult<reqwest::blocking::RequestBuilder>,
+) -> AppResult<(reqwest::StatusCode, String)> {
+    let mut attempt = 0;
+    loop {
+        let outcome = build()?.send().and_then(|r| {
+            let status = r.status();
+            r.text().map(|body| (status, body))
+        });
+        let retryable = match &outcome {
+            Ok((status, _)) => status.as_u16() == 429 || status.is_server_error(),
+            // Timeout não entra: repetir só multiplicaria a espera.
+            Err(e) => !e.is_timeout() && (e.is_connect() || e.is_request() || e.is_body()),
+        };
+        if retryable && attempt < RETRY_DELAYS.len() {
+            thread::sleep(RETRY_DELAYS[attempt]);
+            attempt += 1;
+            continue;
+        }
+        return outcome.map_err(|e| network_error(service, &e));
+    }
+}
+
+fn network_error(service: &str, e: &reqwest::Error) -> AppError {
+    let reason = if e.is_timeout() {
+        "a OpenAI demorou demais para responder".to_string()
+    } else if e.is_connect() {
+        "não foi possível conectar à OpenAI. Verifique sua internet".to_string()
+    } else {
+        let mut detail = e.to_string();
+        let mut source = std::error::Error::source(e);
+        while let Some(inner) = source {
+            detail.push_str(": ");
+            detail.push_str(&inner.to_string());
+            source = inner.source();
+        }
+        detail
+    };
+    AppError::Message(format!("{service} falhou: {reason}. Tente de novo."))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranscriptSegment {
@@ -74,26 +135,25 @@ pub fn transcribe_file(api_key: &str, path: &Path, language: &str) -> AppResult<
         .unwrap_or("audio.wav")
         .to_string();
 
-    let part = reqwest::blocking::multipart::Part::bytes(bytes)
-        .file_name(filename)
-        .mime_str("audio/wav")
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let client = http_client(TRANSCRIBE_TIMEOUT)?;
+    let (status, body) = send_with_retry("Whisper", || {
+        let part = reqwest::blocking::multipart::Part::bytes(bytes.clone())
+            .file_name(filename.clone())
+            .mime_str("audio/wav")
+            .map_err(|e| AppError::Message(e.to_string()))?;
 
-    let form = reqwest::blocking::multipart::Form::new()
-        .part("file", part)
-        .text("model", "whisper-1")
-        .text("response_format", "verbose_json")
-        .text("language", language.to_string());
+        let form = reqwest::blocking::multipart::Form::new()
+            .part("file", part)
+            .text("model", "whisper-1")
+            .text("response_format", "verbose_json")
+            .text("language", language.to_string());
 
-    let client = reqwest::blocking::Client::new();
-    let response = client
-        .post("https://api.openai.com/v1/audio/transcriptions")
-        .bearer_auth(api_key)
-        .multipart(form)
-        .send()?;
+        Ok(client
+            .post("https://api.openai.com/v1/audio/transcriptions")
+            .bearer_auth(api_key)
+            .multipart(form))
+    })?;
 
-    let status = response.status();
-    let body = response.text()?;
     if !status.is_success() {
         return Err(AppError::Message(format!(
             "Whisper falhou ({status}): {body}"
@@ -142,15 +202,14 @@ Seja fiel ao conteúdo. Se algo não aparecer, use lista vazia."#;
         ]
     });
 
-    let client = reqwest::blocking::Client::new();
-    let response = client
-        .post("https://api.openai.com/v1/chat/completions")
-        .bearer_auth(api_key)
-        .json(&payload)
-        .send()?;
+    let client = http_client(SUMMARY_TIMEOUT)?;
+    let (status, body) = send_with_retry("GPT", || {
+        Ok(client
+            .post("https://api.openai.com/v1/chat/completions")
+            .bearer_auth(api_key)
+            .json(&payload))
+    })?;
 
-    let status = response.status();
-    let body = response.text()?;
     if !status.is_success() {
         return Err(AppError::Message(format!(
             "GPT falhou ({status}): {body}"
