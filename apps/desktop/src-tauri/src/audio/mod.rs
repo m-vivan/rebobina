@@ -3,8 +3,9 @@ pub use mix::mix_mono_wavs;
 mod permissions;
 
 pub use permissions::{
-    ensure_screen_permission, init_screen_permission_baseline, open_screen_privacy_settings,
-    reset_screen_permission_tcc, screen_permission_status, ScreenPermissionStatus,
+    ensure_screen_permission, has_screen_permission, init_screen_permission_baseline,
+    open_screen_privacy_settings, reset_screen_permission_tcc, screen_permission_status,
+    ScreenPermissionStatus,
 };
 
 use crate::error::{AppError, AppResult};
