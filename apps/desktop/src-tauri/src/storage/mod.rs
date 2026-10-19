@@ -9,6 +9,10 @@ use uuid::Uuid;
 
 const KEYRING_SERVICE: &str = "com.vivan.gravador";
 const KEYRING_USER: &str = "openai_api_key";
+const APP_DATA_DIR_NAME: &str = "rebobina";
+const LEGACY_DATA_DIR_NAME: &str = "gravador";
+const DB_FILE_NAME: &str = "rebobina.db";
+const LEGACY_DB_FILE_NAME: &str = "gravador.db";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -66,12 +70,10 @@ pub struct Storage {
 
 impl Storage {
     pub fn init() -> AppResult<Self> {
-        let data_dir = dirs::data_dir()
-            .ok_or_else(|| AppError::Message("Não foi possível resolver o diretório de dados".into()))?
-            .join("gravador");
+        let data_dir = resolve_data_dir()?;
         fs::create_dir_all(data_dir.join("meetings"))?;
 
-        let db_path = data_dir.join("gravador.db");
+        let db_path = resolve_db_path(&data_dir)?;
         let conn = Connection::open(&db_path)?;
         conn.execute_batch(
             r#"
@@ -109,6 +111,8 @@ impl Storage {
             );
             "#,
         )?;
+
+        rewrite_legacy_audio_paths(&conn, &data_dir)?;
 
         Ok(Self {
             conn: Mutex::new(conn),
@@ -357,7 +361,7 @@ impl Storage {
         if dir.exists() {
             if let Err(e) = fs::remove_dir_all(&dir) {
                 // DB já apagada; pasta residual não deve impedir o fluxo.
-                eprintln!("gravador: falha ao remover pasta da reunião: {e}");
+                eprintln!("rebobina: falha ao remover pasta da reunião: {e}");
             }
         }
         Ok(())
@@ -470,4 +474,87 @@ fn map_meeting(row: &rusqlite::Row<'_>) -> rusqlite::Result<Meeting> {
         error_message: row.get(7)?,
         device_name: row.get(8)?,
     })
+}
+
+/// Resolve `~/Library/Application Support/rebobina`, migrando de `gravador` se necessário.
+fn resolve_data_dir() -> AppResult<PathBuf> {
+    let base = dirs::data_dir()
+        .ok_or_else(|| AppError::Message("Não foi possível resolver o diretório de dados".into()))?;
+    let new_dir = base.join(APP_DATA_DIR_NAME);
+    let old_dir = base.join(LEGACY_DATA_DIR_NAME);
+
+    if !new_dir.exists() && old_dir.exists() {
+        match fs::rename(&old_dir, &new_dir) {
+            Ok(()) => {
+                eprintln!(
+                    "rebobina: migrou dados de {:?} para {:?}",
+                    old_dir, new_dir
+                );
+            }
+            Err(rename_err) => {
+                // Fallback (ex.: volumes cruzados): copia e remove a pasta antiga.
+                copy_dir_recursive(&old_dir, &new_dir)?;
+                if let Err(e) = fs::remove_dir_all(&old_dir) {
+                    eprintln!(
+                        "rebobina: dados copiados para {:?}, mas não foi possível remover {:?}: {e}",
+                        new_dir, old_dir
+                    );
+                } else {
+                    eprintln!(
+                        "rebobina: migrou (cópia) dados de {:?} para {:?} (rename falhou: {rename_err})",
+                        old_dir, new_dir
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(new_dir)
+}
+
+fn resolve_db_path(data_dir: &Path) -> AppResult<PathBuf> {
+    let new_db = data_dir.join(DB_FILE_NAME);
+    let old_db = data_dir.join(LEGACY_DB_FILE_NAME);
+    if !new_db.exists() && old_db.exists() {
+        fs::rename(&old_db, &new_db)?;
+        eprintln!(
+            "rebobina: renomeou banco {:?} → {:?}",
+            old_db.file_name(),
+            new_db.file_name()
+        );
+    }
+    Ok(new_db)
+}
+
+/// Atualiza `audio_path` absolutos que ainda apontam para a pasta legada `gravador`.
+fn rewrite_legacy_audio_paths(conn: &Connection, data_dir: &Path) -> AppResult<()> {
+    let old_marker = format!("/{LEGACY_DATA_DIR_NAME}/");
+    let new_marker = format!("/{APP_DATA_DIR_NAME}/");
+    let updated = conn.execute(
+        "UPDATE meetings SET audio_path = REPLACE(audio_path, ?1, ?2) WHERE audio_path LIKE ?3",
+        params![old_marker, new_marker, format!("%{old_marker}%")],
+    )?;
+    if updated > 0 {
+        eprintln!(
+            "rebobina: reescreveu {updated} audio_path(s) para {:?}",
+            data_dir
+        );
+    }
+    Ok(())
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> AppResult<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_recursive(&from, &to)?;
+        } else if ty.is_file() {
+            fs::copy(&from, &to)?;
+        }
+    }
+    Ok(())
 }
