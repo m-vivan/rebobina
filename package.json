@@ -1,7 +1,7 @@
 {
-  "name": "gravador",
+  "name": "rebobina",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "scripts": {
     "dev": "npm --prefix apps/desktop run tauri:dev",
     "build": "npm --prefix apps/desktop run tauri:build",

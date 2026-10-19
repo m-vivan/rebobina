@@ -12,7 +12,7 @@ Captura **microfone + áudio do sistema** via ScreenCaptureKit — sem bot na ca
 - **Tipografia:** Archivo Expanded Black (títulos) · Figtree (texto) · VT323 (contador) · Caveat (títulos das fitas)
 - **Arquivos:** [`brand/`](brand/) — símbolo, ícone e guia de identidade (`rebobina-identidade.html`)
 
-Os identificadores de bundle/keychain continuam `com.vivan.gravador` (permissões TCC e API key já salvas). A pasta de dados passou a ser `rebobina` — na primeira abertura o app migra automaticamente de `~/Library/Application Support/gravador/` se existir.
+Identificadores: bundle/keychain `dev.vivan.rebobina` (domínio [vivan.dev](https://vivan.dev)), pasta de dados `~/Library/Application Support/rebobina/`. Na primeira abertura o app migra dados/API key legados de `gravador` / `com.vivan.gravador`, se existirem. **É preciso autorizar de novo** Gravação de tela para o novo bundle ID.
 
 ## Requisitos
 

@@ -42,11 +42,12 @@ microfone usar (AirPods, embutido, etc.).
 | Erro ao iniciar captura | Ajustes → Gravação de tela → Rebobina ON → **Cmd+Q** → abrir de novo |
 | VU mudo | Aumente o volume da reunião; confira se há áudio saindo do Mac |
 | Eco | Use fones |
+| Whisper 413 Payload Too Large | Áudio > ~25 MB; o app fatia automaticamente. Atualize o Rebobina e clique em **Tentar de novo**. |
 
 ### Reset manual da permissão
 
 ```bash
-tccutil reset ScreenCapture com.vivan.gravador
+tccutil reset ScreenCapture dev.vivan.rebobina
 ```
 
 Depois abra o Rebobina, conceda de novo, **Cmd+Q** e abra outra vez.

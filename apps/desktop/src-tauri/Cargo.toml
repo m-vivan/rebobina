@@ -1,12 +1,12 @@
 [package]
-name = "gravador"
-version = "0.1.0"
+name = "rebobina"
+version = "0.1.1"
 description = "Grave reuniões no Mac, transcreva e resuma com IA"
 authors = ["vivan"]
 edition = "2021"
 
 [lib]
-name = "gravador_lib"
+name = "rebobina_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

@@ -6,8 +6,11 @@ use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Whisper API limit is 25MB. Chunk ~10 minutes of audio conservatively.
-const MAX_CHUNK_SECONDS: u32 = 600;
+/// Limite oficial da Whisper API (25 MiB). Usamos margem — multipart/overhead
+/// e arquivos “quase 25MB” estouravam com 413 (ex.: 26 241 778 > 26 214 400).
+const WHISPER_HARD_LIMIT_BYTES: u64 = 25 * 1024 * 1024;
+const WHISPER_SAFE_UPLOAD_BYTES: u64 = 20 * 1024 * 1024;
+const DEFAULT_CHUNK_SECONDS: u32 = 600;
 
 pub fn process_meeting(storage: &Storage, meeting_id: &str) -> AppResult<()> {
     let meeting = storage
@@ -85,19 +88,50 @@ fn transcribe_with_chunking(
     language: &str,
 ) -> AppResult<TranscriptionResult> {
     let meta = fs::metadata(path)?;
-    const MAX_BYTES: u64 = 24 * 1024 * 1024;
-
-    if meta.len() <= MAX_BYTES {
-        return openai::transcribe_file(api_key, path, language);
+    if meta.len() <= WHISPER_SAFE_UPLOAD_BYTES {
+        match openai::transcribe_file(api_key, path, language) {
+            Ok(t) => return Ok(t),
+            Err(e) if is_payload_too_large(&e) => {
+                eprintln!(
+                    "rebobina: Whisper 413 no arquivo inteiro ({} bytes) — fatiando…",
+                    meta.len()
+                );
+            }
+            Err(e) => return Err(e),
+        }
     }
 
-    let chunks = split_wav(path, MAX_CHUNK_SECONDS)?;
+    let max_seconds = chunk_seconds_for_file(path, meta.len())?;
+    transcribe_chunks(api_key, path, language, max_seconds)
+}
+
+fn is_payload_too_large(err: &AppError) -> bool {
+    let s = err.to_string();
+    s.contains("413") || s.to_lowercase().contains("payload too large")
+}
+
+/// Estima duração máxima por pedaço para caber em ~20 MB com folga.
+fn chunk_seconds_for_file(path: &Path, file_bytes: u64) -> AppResult<u32> {
+    let duration = chunk_duration_seconds(path)?.max(1.0);
+    let bytes_per_sec = (file_bytes as f64 / duration).max(1.0);
+    let secs = (WHISPER_SAFE_UPLOAD_BYTES as f64 / bytes_per_sec * 0.9).floor() as u32;
+    Ok(secs.clamp(30, DEFAULT_CHUNK_SECONDS))
+}
+
+fn transcribe_chunks(
+    api_key: &str,
+    path: &Path,
+    language: &str,
+    max_seconds: u32,
+) -> AppResult<TranscriptionResult> {
+    let chunks = split_wav(path, max_seconds)?;
     let mut all_segments = Vec::new();
     let mut texts = Vec::new();
     let mut offset = 0.0f64;
 
     for chunk_path in &chunks {
-        let result = openai::transcribe_file(api_key, chunk_path, language)?;
+        // Garante que nenhum pedaço passe do hard limit (re-fatia se necessário).
+        let result = transcribe_one_chunk(api_key, chunk_path, language, max_seconds)?;
         texts.push(result.text);
         for seg in result.segments {
             all_segments.push(TranscriptSegment {
@@ -106,7 +140,7 @@ fn transcribe_with_chunking(
                 text: seg.text,
             });
         }
-        offset += chunk_duration_seconds(chunk_path)?;
+        offset += chunk_duration_seconds(chunk_path).unwrap_or(0.0);
         let _ = fs::remove_file(chunk_path);
     }
 
@@ -118,6 +152,33 @@ fn transcribe_with_chunking(
         text: texts.join(" ").trim().to_string(),
         segments: all_segments,
     })
+}
+
+fn transcribe_one_chunk(
+    api_key: &str,
+    chunk_path: &Path,
+    language: &str,
+    parent_max_seconds: u32,
+) -> AppResult<TranscriptionResult> {
+    let len = fs::metadata(chunk_path).map(|m| m.len()).unwrap_or(0);
+    if len > WHISPER_HARD_LIMIT_BYTES || len > WHISPER_SAFE_UPLOAD_BYTES {
+        let half = (parent_max_seconds / 2).max(15);
+        eprintln!(
+            "rebobina: pedaço {} bytes > safe — re-fatiando em ~{half}s",
+            len
+        );
+        return transcribe_chunks(api_key, chunk_path, language, half);
+    }
+
+    match openai::transcribe_file(api_key, chunk_path, language) {
+        Ok(t) => Ok(t),
+        Err(e) if is_payload_too_large(&e) => {
+            let half = (parent_max_seconds / 2).max(15);
+            eprintln!("rebobina: Whisper 413 no pedaço — re-fatiando em ~{half}s");
+            transcribe_chunks(api_key, chunk_path, language, half)
+        }
+        Err(e) => Err(e),
+    }
 }
 
 fn chunk_duration_seconds(path: &Path) -> AppResult<f64> {

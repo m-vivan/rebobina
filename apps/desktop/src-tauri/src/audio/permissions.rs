@@ -2,7 +2,7 @@ use crate::error::{AppError, AppResult};
 use serde::Serialize;
 use std::sync::OnceLock;
 
-const BUNDLE_ID: &str = "com.vivan.gravador";
+const BUNDLE_ID: &str = "dev.vivan.rebobina";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -1597,7 +1597,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "gravador"
+name = "rebobina"
 version = "0.1.0"
 dependencies = [
  "chrono",

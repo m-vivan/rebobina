@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use uuid::Uuid;
 
-const KEYRING_SERVICE: &str = "com.vivan.gravador";
+const KEYRING_SERVICE: &str = "dev.vivan.rebobina";
+const LEGACY_KEYRING_SERVICE: &str = "com.vivan.gravador";
 const KEYRING_USER: &str = "openai_api_key";
 const APP_DATA_DIR_NAME: &str = "rebobina";
 const LEGACY_DATA_DIR_NAME: &str = "gravador";
@@ -438,10 +439,15 @@ impl Storage {
         let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)?;
         if api_key.trim().is_empty() {
             match entry.delete_credential() {
-                Ok(()) => Ok(()),
-                Err(keyring::Error::NoEntry) => Ok(()),
-                Err(e) => Err(e.into()),
+                Ok(()) => {}
+                Err(keyring::Error::NoEntry) => {}
+                Err(e) => return Err(e.into()),
             }
+            // Limpa também a entrada legada, se existir.
+            if let Ok(legacy) = keyring::Entry::new(LEGACY_KEYRING_SERVICE, KEYRING_USER) {
+                let _ = legacy.delete_credential();
+            }
+            Ok(())
         } else {
             entry.set_password(api_key.trim())?;
             Ok(())
@@ -452,7 +458,25 @@ impl Storage {
         let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)?;
         match entry.get_password() {
             Ok(value) => Ok(Some(value)),
-            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(keyring::Error::NoEntry) => {
+                // Migra API key do serviço antigo (com.vivan.gravador), se houver.
+                let legacy = keyring::Entry::new(LEGACY_KEYRING_SERVICE, KEYRING_USER)?;
+                match legacy.get_password() {
+                    Ok(value) => {
+                        if let Err(e) = entry.set_password(&value) {
+                            eprintln!("rebobina: não migrou API key para {KEYRING_SERVICE}: {e}");
+                        } else {
+                            let _ = legacy.delete_credential();
+                            eprintln!(
+                                "rebobina: migrou API key de {LEGACY_KEYRING_SERVICE} → {KEYRING_SERVICE}"
+                            );
+                        }
+                        Ok(Some(value))
+                    }
+                    Err(keyring::Error::NoEntry) => Ok(None),
+                    Err(e) => Err(e.into()),
+                }
+            }
             Err(e) => Err(e.into()),
         }
     }
