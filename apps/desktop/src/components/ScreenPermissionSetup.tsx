@@ -73,19 +73,19 @@ export function ScreenPermissionSetup() {
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true">
       <div className="modal panel">
-        <p className="eyebrow">Setup de áudio</p>
-        <h2>Permissão de Gravação de tela</h2>
+        <p className="eyebrow">Primeiro uso</p>
+        <h2>Deixe o Rebobina ouvir suas chamadas</h2>
         <p className="muted">
-          O Rebobina captura o áudio do sistema pelo{" "}
-          <strong>ScreenCaptureKit</strong> da Apple — sem drivers extras. O
-          macOS pede permissão de Gravação de tela (nenhum vídeo é salvo).
+          Para gravar o que as outras pessoas falam, o macOS pede a permissão
+          chamada <strong>Gravação de tela</strong>. O Rebobina usa só o som:
+          nenhuma imagem da sua tela é salva.
         </p>
         <ul className="checklist">
-          <li>Clique em “Permitir” e aceite o diálogo do macOS.</li>
+          <li>Clique em “Permitir” e confirme na janela do macOS.</li>
           <li>
-            Se não aparecer: Ajustes → Privacidade → Gravação de tela → Rebobina.
+            Se a janela não aparecer, abra os Ajustes e ative o Rebobina em Privacidade → Gravação de tela.
           </li>
-          <li>Reinicie o app depois de ativar a permissão.</li>
+          <li>Feche e abra o Rebobina de novo para valer.</li>
         </ul>
 
         {message && <p className="ok">{message}</p>}
@@ -98,7 +98,7 @@ export function ScreenPermissionSetup() {
             disabled={busy}
             onClick={onRequest}
           >
-            {busy ? "Aguarde…" : "Permitir captura"}
+            {busy ? "Aguarde…" : "Permitir"}
           </button>
           <button className="btn" type="button" onClick={onOpenSettings}>
             Abrir Ajustes

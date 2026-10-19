@@ -90,7 +90,7 @@ export function Home() {
           <BrandMark size={60} />
           <div className="brand-copy">
             <h1 className="brand-name">rebobina</h1>
-            <p className="brand-tag">Aperte REC na reunião. Depois é só rebobinar.</p>
+            <p className="brand-tag">Grave suas reuniões e receba o resumo pronto.</p>
           </div>
         </div>
         <Link className="btn ghost" to="/settings">
@@ -100,29 +100,44 @@ export function Home() {
 
       {!hasKey && (
         <div className="banner warn">
-          Configure sua API key da OpenAI em{" "}
-          <Link to="/settings">Configurações</Link> para transcrever e resumir.
+          Falta um passo para receber transcrições e resumos: conecte sua conta
+          da OpenAI em <Link to="/settings">Configurações</Link>. Você já pode
+          gravar enquanto isso.
         </div>
       )}
 
       <section className="panel record-panel">
-        <h2>Nova fita</h2>
-        <p className="muted">
-          Microfone + áudio do sistema via ScreenCaptureKit. Na primeira vez,
-          autorize <strong>Gravação de tela</strong> — nenhum vídeo é salvo.
-        </p>
+        <div className="record-intro">
+          <h2>Gravar uma reunião</h2>
+          <p className="muted">
+            Funciona com Zoom, Meet, Teams ou qualquer chamada. Quando você
+            parar, o Rebobina escreve tudo o que foi dito e um resumo com as
+            decisões e tarefas.
+          </p>
+        </div>
         <form className="record-form" onSubmit={onStart}>
-          <label>
-            Título
+          <label className="record-title">
+            <span>
+              Nome da reunião <span className="optional">(opcional)</span>
+            </span>
             <input
+              id="meeting-title"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="Standup, 1:1, planning…"
+              placeholder="Ex.: Reunião de planejamento"
             />
           </label>
-          <label>
-            Microfone
+          <button
+            className="btn primary rec large"
+            type="submit"
+            disabled={starting}
+          >
+            {starting ? "Começando…" : "Gravar"}
+          </button>
+          <label className="mic-picker">
+            <span>Seu microfone</span>
             <select
+              id="mic"
               value={deviceName}
               onChange={(e) => setDeviceName(e.target.value)}
               onFocus={() => {
@@ -140,28 +155,48 @@ export function Home() {
               ))}
             </select>
           </label>
-          <button className="btn primary rec" type="submit" disabled={starting}>
-            {starting ? "Iniciando…" : "REC"}
-          </button>
         </form>
+        <p className="record-note">
+          Grava a sua voz e o som da chamada. Nenhuma imagem da tela é salva.
+        </p>
       </section>
 
       <section className="panel">
-        <div className="row between">
-          <h2>Suas fitas</h2>
-          <input
-            className="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Buscar título ou transcript…"
-          />
+        <div className="row between library-head">
+          <h2>Suas reuniões</h2>
+          {meetings.length > 0 || query ? (
+            <input
+              id="search"
+              className="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Buscar por nome ou pelo que foi dito…"
+            />
+          ) : null}
         </div>
 
         {loading && <p className="muted">Carregando…</p>}
         {error && <p className="error">{error}</p>}
 
-        {!loading && meetings.length === 0 && (
-          <p className="muted">Nenhuma fita ainda. Aperte REC na próxima call.</p>
+        {!loading && meetings.length === 0 && !query && (
+          <ol className="empty-steps">
+            <li>
+              <strong>Aperte Gravar</strong>
+              <span>quando a reunião começar</span>
+            </li>
+            <li>
+              <strong>Pare no final</strong>
+              <span>o Rebobina cuida do resto</span>
+            </li>
+            <li>
+              <strong>Leia o resumo</strong>
+              <span>e volte a qualquer trecho da conversa</span>
+            </li>
+          </ol>
+        )}
+
+        {!loading && meetings.length === 0 && query && (
+          <p className="muted">Nada encontrado para “{query}”.</p>
         )}
 
         <ul className="meeting-list">
