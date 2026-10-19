@@ -1,4 +1,5 @@
 mod mix;
+pub use mix::mix_mono_wavs;
 mod permissions;
 
 pub use permissions::{
