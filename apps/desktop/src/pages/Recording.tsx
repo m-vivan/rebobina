@@ -64,12 +64,12 @@ export function Recording() {
     <div className="page recording-page">
       <header className="page-header">
         <Link className="btn ghost" to="/">
-          ← Biblioteca
+          ← Suas fitas
         </Link>
       </header>
 
       <section className="panel record-live">
-        <p className="eyebrow live">Gravando</p>
+        <p className="eyebrow live">● REC · Lado A</p>
         <h1>{meeting?.title ?? "Reunião"}</h1>
         <p className="timer">{formatDuration(elapsed)}</p>
 
@@ -90,7 +90,7 @@ export function Recording() {
           onClick={onStop}
           disabled={stopping}
         >
-          {stopping ? "Parando…" : "Parar e processar"}
+          {stopping ? "Parando…" : "Parar e rebobinar"}
         </button>
       </section>
     </div>

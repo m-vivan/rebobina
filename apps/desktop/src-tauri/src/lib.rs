@@ -328,5 +328,5 @@ pub fn run() {
             scan_active_calls
         ])
         .run(tauri::generate_context!())
-        .expect("erro ao executar o Gravador");
+        .expect("erro ao executar o Rebobina");
 }

@@ -112,7 +112,7 @@ pub fn install() -> AppResult<InstallResult> {
         let brew = brew.to_string_lossy();
         let brew_escaped = brew.replace('\\', "\\\\").replace('"', "\\\"");
         let cmd = format!(
-            "{brew_escaped} install --cask {BLACKHOLE_CASK}; echo; echo \"Concluído. No Gravador, clique em Ativar agora (ou reinicie o Mac).\"; echo \"Pressione Enter para fechar...\"; read _"
+            "{brew_escaped} install --cask {BLACKHOLE_CASK}; echo; echo \"Concluído. No Rebobina, clique em Ativar agora (ou reinicie o Mac).\"; echo \"Pressione Enter para fechar...\"; read _"
         );
         let cmd_escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
 
@@ -135,14 +135,14 @@ pub fn install() -> AppResult<InstallResult> {
 
         return Ok(InstallResult {
             method: "brew-terminal".into(),
-            message: "Terminal aberto com a instalação do BlackHole. Depois de autorizar, volte ao Gravador e clique em “Ativar agora”.".into(),
+            message: "Terminal aberto com a instalação do BlackHole. Depois de autorizar, volte ao Rebobina e clique em “Ativar agora”.".into(),
         });
     }
 
     open_download_page()?;
     Ok(InstallResult {
         method: "download-page".into(),
-        message: "Homebrew não encontrado. Abrimos a página oficial do BlackHole — baixe o 2ch, instale, depois clique em “Ativar agora” no Gravador.".into(),
+        message: "Homebrew não encontrado. Abrimos a página oficial do BlackHole — baixe o 2ch, instale, depois clique em “Ativar agora” no Rebobina.".into(),
     })
 }
 

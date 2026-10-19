@@ -44,7 +44,7 @@ export function statusLabel(status: string): string {
     case "recording":
       return "Gravando";
     case "processing":
-      return "Processando";
+      return "Rebobinando";
     case "ready":
       return "Pronto";
     case "error":

@@ -1,5 +1,17 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <rect width="64" height="64" rx="16" fill="#0C1220"/>
-  <circle cx="18" cy="32" r="6" fill="#FF6B4A"/>
-  <path d="M30 22v20M38 18v28M46 24v16" stroke="#5CC8FF" stroke-width="4" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs><clipPath id="sq"><rect width="1024" height="1024" rx="230"/></clipPath></defs>
+  <g clip-path="url(#sq)">
+    <rect width="1024" height="1024" fill="#1E1714"/>
+    <rect y="700" width="1024" height="44" fill="#E8402A"/>
+    <rect y="744" width="1024" height="44" fill="#F2A23A"/>
+    <rect y="788" width="1024" height="44" fill="#2F8F87"/>
+  </g>
+  <g transform="translate(152 196) scale(6)">
+    <rect x="2" y="2" width="116" height="76" rx="10" fill="#EADFC6"/>
+    <rect x="30" y="27" width="60" height="18" rx="9" fill="#1E1714"/>
+    <circle cx="44" cy="36" r="6.5" fill="#E8402A"/>
+    <circle cx="76" cy="36" r="6" stroke="#EADFC6" stroke-width="2.5" fill="none"/>
+    <circle cx="76" cy="36" r="2" fill="#EADFC6"/>
+    <path d="M28 78 34 60h52l6 18z" fill="#CFC2A6"/>
+  </g>
 </svg>
