@@ -64,12 +64,12 @@ export function Recording() {
     <div className="page recording-page">
       <header className="page-header">
         <Link className="btn ghost" to="/">
-          ← Suas fitas
+          ← Suas reuniões
         </Link>
       </header>
 
       <section className="panel record-live">
-        <p className="eyebrow live">● REC · Lado A</p>
+        <p className="eyebrow live">● Gravando</p>
         <h1>{meeting?.title ?? "Reunião"}</h1>
         <p className="timer">{formatDuration(elapsed)}</p>
 
@@ -78,8 +78,8 @@ export function Recording() {
         </div>
         <p className="muted vu-hint">
           {level < 0.01
-            ? "Sinal baixo — fale no microfone e confira se a reunião está audível. Permissão de Gravação de tela está ativa?"
-            : "Recebendo áudio (mic + sistema)"}
+            ? "Ainda não estamos ouvindo nada. Fale algo ou confira se o som da chamada está ligado."
+            : "Ouvindo você e a chamada"}
         </p>
 
         {error && <p className="error">{error}</p>}
