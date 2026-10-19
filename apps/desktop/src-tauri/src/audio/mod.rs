@@ -252,7 +252,7 @@ impl Recorder {
         stream
             .start_capture()
             .map_err(|e| AppError::Audio(format!(
-                "Não foi possível iniciar a captura ({e}). Em Ajustes → Privacidade → Gravação de tela, habilite o Gravador e reinicie o app."
+                "Não foi possível iniciar a captura ({e}). Em Ajustes → Privacidade → Gravação de tela, habilite o Rebobina e reinicie o app."
             )))?;
 
         let mic_stream = if use_sck_mic {

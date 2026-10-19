@@ -19,7 +19,7 @@ pub fn screen_permission_status() -> ScreenPermissionStatus {
     let hint = if granted {
         "Permissão de Gravação de tela concedida — áudio do sistema disponível.".into()
     } else {
-        "O Gravador precisa de Gravação de tela para capturar o áudio da reunião. Em Ajustes → Privacidade e segurança → Gravação de tela, habilite o Gravador e reinicie o app.".into()
+        "O Rebobina precisa de Gravação de tela para capturar o áudio da reunião. Em Ajustes → Privacidade e segurança → Gravação de tela, habilite o Rebobina e reinicie o app.".into()
     };
     ScreenPermissionStatus { granted, hint }
 }
@@ -34,7 +34,7 @@ pub fn ensure_screen_permission() -> AppResult<()> {
         return Ok(());
     }
     Err(AppError::Audio(
-        "Permissão de Gravação de tela negada. Abra Ajustes do Sistema → Privacidade e segurança → Gravação de tela, ative o Gravador e reinicie o app.".into(),
+        "Permissão de Gravação de tela negada. Abra Ajustes do Sistema → Privacidade e segurança → Gravação de tela, ative o Rebobina e reinicie o app.".into(),
     ))
 }
 

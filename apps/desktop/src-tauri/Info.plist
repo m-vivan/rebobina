@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>O Gravador usa o microfone para gravar a sua voz nas reuniões.</string>
+	<string>O Rebobina usa o microfone para gravar a sua voz nas reuniões.</string>
 	<key>NSScreenCaptureUsageDescription</key>
-	<string>O Gravador usa a Gravação de tela apenas para capturar o áudio do sistema (Zoom, Meet, etc.), sem salvar vídeo.</string>
+	<string>O Rebobina usa a Gravação de tela apenas para capturar o áudio do sistema (Zoom, Meet, etc.), sem salvar vídeo.</string>
 	<key>NSUserNotificationsUsageDescription</key>
-	<string>O Gravador avisa quando detecta o início ou o fim de uma reunião para você gravar ou parar com um clique.</string>
+	<string>O Rebobina avisa quando detecta o início ou o fim de uma reunião para você gravar ou parar com um clique.</string>
 </dict>
 </plist>
 

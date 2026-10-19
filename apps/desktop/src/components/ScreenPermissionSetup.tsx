@@ -47,7 +47,7 @@ export function ScreenPermissionSetup() {
         setTimeout(() => setOpen(false), 800);
       } else {
         setMessage(
-          "Ainda sem permissão. Abra os Ajustes, ative o Gravador e reinicie o app.",
+          "Ainda sem permissão. Abra os Ajustes, ative o Rebobina e reinicie o app.",
         );
       }
     } catch (e) {
@@ -76,14 +76,14 @@ export function ScreenPermissionSetup() {
         <p className="eyebrow">Setup de áudio</p>
         <h2>Permissão de Gravação de tela</h2>
         <p className="muted">
-          O Gravador captura o áudio do sistema pelo{" "}
+          O Rebobina captura o áudio do sistema pelo{" "}
           <strong>ScreenCaptureKit</strong> da Apple — sem drivers extras. O
           macOS pede permissão de Gravação de tela (nenhum vídeo é salvo).
         </p>
         <ul className="checklist">
           <li>Clique em “Permitir” e aceite o diálogo do macOS.</li>
           <li>
-            Se não aparecer: Ajustes → Privacidade → Gravação de tela → Gravador.
+            Se não aparecer: Ajustes → Privacidade → Gravação de tela → Rebobina.
           </li>
           <li>Reinicie o app depois de ativar a permissão.</li>
         </ul>

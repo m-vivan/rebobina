@@ -87,10 +87,10 @@ export function Home() {
     <div className="page">
       <header className="page-header">
         <div className="brand-lockup">
-          <BrandMark size={44} />
+          <BrandMark size={60} />
           <div className="brand-copy">
-            <h1 className="brand-name">Gravador</h1>
-            <p className="brand-tag">Reuniões locais · transcrição e resumo</p>
+            <h1 className="brand-name">rebobina</h1>
+            <p className="brand-tag">Aperte REC na reunião. Depois é só rebobinar.</p>
           </div>
         </div>
         <Link className="btn ghost" to="/settings">
@@ -106,7 +106,7 @@ export function Home() {
       )}
 
       <section className="panel record-panel">
-        <h2>Nova gravação</h2>
+        <h2>Nova fita</h2>
         <p className="muted">
           Microfone + áudio do sistema via ScreenCaptureKit. Na primeira vez,
           autorize <strong>Gravação de tela</strong> — nenhum vídeo é salvo.
@@ -140,15 +140,15 @@ export function Home() {
               ))}
             </select>
           </label>
-          <button className="btn primary" type="submit" disabled={starting}>
-            {starting ? "Iniciando…" : "Iniciar gravação"}
+          <button className="btn primary rec" type="submit" disabled={starting}>
+            {starting ? "Iniciando…" : "REC"}
           </button>
         </form>
       </section>
 
       <section className="panel">
         <div className="row between">
-          <h2>Biblioteca</h2>
+          <h2>Suas fitas</h2>
           <input
             className="search"
             value={query}
@@ -161,7 +161,7 @@ export function Home() {
         {error && <p className="error">{error}</p>}
 
         {!loading && meetings.length === 0 && (
-          <p className="muted">Nenhuma reunião ainda.</p>
+          <p className="muted">Nenhuma fita ainda. Aperte REC na próxima call.</p>
         )}
 
         <ul className="meeting-list">
@@ -169,7 +169,7 @@ export function Home() {
             <li key={m.id} className="meeting-row">
               <Link to={`/meeting/${m.id}`} className="meeting-main">
                 <strong>{m.title}</strong>
-                <span className="muted">
+                <span className="muted meta">
                   {formatDate(m.startedAt)} · {formatDuration(m.durationSec)}
                 </span>
               </Link>

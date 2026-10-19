@@ -119,7 +119,7 @@ export function CallDetectPrompt() {
         {
           id: ACTION_STOP,
           actions: [
-            { id: ACT_STOP, title: "Parar e processar", foreground: true },
+            { id: ACT_STOP, title: "Parar e rebobinar", foreground: true },
             { id: ACT_KEEP, title: "Continuar gravando", foreground: false },
           ],
         },

@@ -183,10 +183,10 @@ export function MeetingDetail() {
       <div className="tabs">
         {(
           [
-            ["resumo", "Resumo"],
+            ["resumo", "Lado B · Resumo"],
             ["actions", "Action items"],
             ["decisions", "Decisões"],
-            ["transcript", "Transcrição"],
+            ["transcript", "Lado A · Transcrição"],
           ] as const
         ).map(([key, label]) => (
           <button

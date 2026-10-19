@@ -1,4 +1,4 @@
-# Gravador
+# Rebobina
 
 App macOS para gravar reuniões localmente, transcrever e resumir com IA (OpenAI Whisper + GPT).
 
@@ -6,10 +6,13 @@ Captura **microfone + áudio do sistema** via ScreenCaptureKit — sem bot na ca
 
 ## Identidade
 
-- **Nome:** Gravador  
-- **Marca:** ponto coral de gravação + barras de onda em ciano  
-- **Paleta:** fundo `#0C1220`, coral `#FF6B4A`, ciano `#5CC8FF`  
-- **Tipografia:** Syne (títulos) · Figtree (texto)
+- **Nome:** Rebobina (antes Gravador). Grava a reunião e depois deixa você voltar ao que importa, como rebobinar uma fita K7.
+- **Marca:** fita cassete com o carretel esquerdo em vermelho REC e três listras de etiqueta
+- **Paleta:** Fita `#1E1714`, Casco `#2A211C`, Etiqueta `#EADFC6`, REC `#E8402A`, Âmbar `#F2A23A`, Petróleo `#2F8F87`
+- **Tipografia:** Archivo Expanded Black (títulos) · Figtree (texto) · VT323 (contador) · Caveat (títulos das fitas)
+- **Arquivos:** [`brand/`](brand/) — símbolo, ícone e guia de identidade (`rebobina-identidade.html`)
+
+Os identificadores internos continuam `gravador` (bundle `com.vivan.gravador`, pasta de dados, keychain), para manter as gravações e permissões já existentes.
 
 ## Requisitos
 
@@ -50,10 +53,10 @@ npm run tauri:build
 
 Artefatos:
 
-- `apps/desktop/src-tauri/target/release/bundle/dmg/Gravador_*.dmg`
-- `apps/desktop/src-tauri/target/release/bundle/macos/Gravador.app`
+- `apps/desktop/src-tauri/target/release/bundle/dmg/Rebobina_*.dmg`
+- `apps/desktop/src-tauri/target/release/bundle/macos/Rebobina.app`
 
-Abra o `.dmg` e arraste **Gravador** para Aplicativos. Na primeira abertura (app não assinado): clique direito → Abrir. Autorize **Gravação de tela**, **Microfone** e **Notificações**.
+Abra o `.dmg` e arraste **Rebobina** para Aplicativos. Na primeira abertura (app não assinado): clique direito → Abrir. Autorize **Gravação de tela**, **Microfone** e **Notificações**.
 
 Na raiz: `npm run build`.
 
@@ -62,7 +65,7 @@ Na raiz: `npm run build`.
 1. Autorize Gravação de tela + microfone
 2. Configure a API key em **Configurações**
 3. Inicie a gravação (ou aceite a notificação ao detectar uma call)
-4. Pare — o app transcreve (Whisper) e resume (GPT-4o)
+4. Pare e rebobine — o app transcreve (Lado A, Whisper) e resume (Lado B, GPT-4o)
 
 ## Dados locais
 

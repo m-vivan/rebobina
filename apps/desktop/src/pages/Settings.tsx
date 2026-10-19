@@ -99,7 +99,7 @@ export function Settings() {
       <section className="panel">
         <h2>Detecção de calls</h2>
         <p className="muted">
-          Quando o Zoom, Meet, Teams, Discord, FaceTime etc. abrem, o Gravador
+          Quando o Zoom, Meet, Teams, Discord, FaceTime etc. abrem, o Rebobina
           pergunta se você quer gravar. Ao sair da call, lembra de parar a
           gravação.
         </p>
