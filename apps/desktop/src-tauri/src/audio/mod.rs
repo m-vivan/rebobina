@@ -2,8 +2,8 @@ mod mix;
 mod permissions;
 
 pub use permissions::{
-    ensure_screen_permission, open_screen_privacy_settings, screen_permission_status,
-    ScreenPermissionStatus,
+    ensure_screen_permission, init_screen_permission_baseline, open_screen_privacy_settings,
+    reset_screen_permission_tcc, screen_permission_status, ScreenPermissionStatus,
 };
 
 use crate::error::{AppError, AppResult};
@@ -249,11 +249,21 @@ impl Recorder {
                 .map_err(|e| AppError::Audio(format!("handler mic: {e}")))?;
         }
 
-        stream
-            .start_capture()
-            .map_err(|e| AppError::Audio(format!(
-                "Não foi possível iniciar a captura ({e}). Em Ajustes → Privacidade → Gravação de tela, habilite o Rebobina e reinicie o app."
-            )))?;
+        stream.start_capture().map_err(|e| {
+            let raw = e.to_string();
+            // macOS localiza "user declined/refused TCCs…" — toggle ligado ≠ SCK liberado (ad-hoc / sem relaunch).
+            if raw.to_lowercase().contains("tcc")
+                || raw.contains("recusou")
+                || raw.to_lowercase().contains("denied")
+                || raw.to_lowercase().contains("declined")
+            {
+                AppError::Audio(permissions::tcc_capture_denied_message(&raw))
+            } else {
+                AppError::Audio(format!(
+                    "Não foi possível iniciar a captura ({raw}). Em Ajustes → Privacidade → Gravação de tela, confira o Rebobina e reinicie o app (Cmd+Q)."
+                ))
+            }
+        })?;
 
         let mic_stream = if use_sck_mic {
             None

@@ -12,7 +12,7 @@ Captura **microfone + áudio do sistema** via ScreenCaptureKit — sem bot na ca
 - **Tipografia:** Archivo Expanded Black (títulos) · Figtree (texto) · VT323 (contador) · Caveat (títulos das fitas)
 - **Arquivos:** [`brand/`](brand/) — símbolo, ícone e guia de identidade (`rebobina-identidade.html`)
 
-Os identificadores de bundle/keychain continuam `com.vivan.gravador` (permissões TCC e API key já salvas). A pasta de dados passou a ser `rebobina` — na primeira abertura o app migra automaticamente de `~/Library/Application Support/gravador/` se existir.
+Identificadores: bundle/keychain `dev.vivan.rebobina` (domínio [vivan.dev](https://vivan.dev)), pasta de dados `~/Library/Application Support/rebobina/`. Na primeira abertura o app migra dados/API key legados de `gravador` / `com.vivan.gravador`, se existirem. **É preciso autorizar de novo** Gravação de tela para o novo bundle ID.
 
 ## Requisitos
 
@@ -56,7 +56,9 @@ Artefatos:
 - `apps/desktop/src-tauri/target/release/bundle/dmg/Rebobina_*.dmg`
 - `apps/desktop/src-tauri/target/release/bundle/macos/Rebobina.app`
 
-Abra o `.dmg` e arraste **Rebobina** para Aplicativos. Na primeira abertura (app não assinado / ad-hoc): clique direito → Abrir. Autorize **Gravação de tela**, **Microfone** e **Notificações**.
+Abra o `.dmg` e arraste **Rebobina** para Aplicativos. Na primeira abertura (app não assinado / ad-hoc): clique direito → Abrir. Autorize **Gravação de tela**, **Microfone** e **Notificações**, depois **Cmd+Q** e abra de novo.
+
+> **macOS 15+:** captura de áudio do sistema (ScreenCaptureKit) exige build **assinado** com certificado Apple. O DMG ad-hoc das Releases sem `APPLE_CERTIFICATE` pode mostrar Rebobina ligado em Privacidade e mesmo assim recusar a gravação (“usuário recusou os TCCs”). Configure os secrets Apple no Actions para uma release utilizável.
 
 Na raiz: `npm run build`.
 

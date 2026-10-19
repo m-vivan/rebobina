@@ -335,7 +335,7 @@ mod tests {
 
     #[test]
     fn downsamples_48k_stereo_to_16k_mono() {
-        let dir = std::env::temp_dir().join(format!("gravador-test-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("rebobina-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("hq.wav");
         let spec = WavSpec {

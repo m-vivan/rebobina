@@ -7,8 +7,9 @@ mod pipeline;
 mod storage;
 
 use audio::{
-    ensure_screen_permission, open_screen_privacy_settings, screen_permission_status,
-    AudioDeviceInfo, Recorder, ScreenPermissionStatus,
+    ensure_screen_permission, init_screen_permission_baseline, open_screen_privacy_settings,
+    reset_screen_permission_tcc, screen_permission_status, AudioDeviceInfo, Recorder,
+    ScreenPermissionStatus,
 };
 use blackhole::{BlackHoleStatus, InstallResult};
 use chrono::Utc;
@@ -50,6 +51,11 @@ fn request_screen_permission() -> AppResult<ScreenPermissionStatus> {
 #[tauri::command]
 fn open_screen_settings() -> AppResult<()> {
     open_screen_privacy_settings()
+}
+
+#[tauri::command]
+fn reset_screen_permission() -> AppResult<String> {
+    reset_screen_permission_tcc()
 }
 
 #[tauri::command]
@@ -295,6 +301,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .manage(state)
         .setup(|app| {
+            init_screen_permission_baseline();
             let storage = app.state::<AppState>().storage.clone();
             meeting_detect::spawn_watcher(app.handle().clone(), storage);
             Ok(())
@@ -321,6 +328,7 @@ pub fn run() {
             get_screen_permission,
             request_screen_permission,
             open_screen_settings,
+            reset_screen_permission,
             get_blackhole_status,
             install_blackhole,
             open_blackhole_download,

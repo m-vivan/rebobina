@@ -96,16 +96,19 @@ Alternativa: Actions → **Release** → **Run workflow** (informe a tag, ex. `v
 
 Artefatos tipicamente publicados: `Rebobina_<versão>_*.dmg` (e metadados do bundle Tauri).
 
-### Assinatura / notarização (opcional)
+### Assinatura / notarização
 
 Sem secrets o build ainda publica o DMG com assinatura **ad-hoc** (`signingIdentity: "-"`).
+Isso basta para instalar e abrir (clique direito → Abrir), mas no **macOS 15+** o
+ScreenCaptureKit / Gravação de tela **costuma recusar** apps ad-hoc mesmo com o
+toggle ligado em Ajustes. Para gravar reuniões de verdade, configure o certificado:
 
 | Secret | Função |
 |--------|--------|
-| `APPLE_CERTIFICATE` | `.p12` em base64 (Developer ID Application) |
+| `APPLE_CERTIFICATE` | `.p12` em base64 (**Developer ID Application** — obrigatório para SCK em produção) |
 | `APPLE_CERTIFICATE_PASSWORD` | Senha do `.p12` |
 | `KEYCHAIN_PASSWORD` | Senha da keychain temporária no CI |
-| `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID` | Notarização via Apple ID |
+| `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID` | Notarização via Apple ID (recomendado) |
 | `APPLE_API_ISSUER` / `APPLE_API_KEY` / `APPLE_API_KEY_PATH` | Notarização via App Store Connect API |
 
 ## Licença
