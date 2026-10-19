@@ -111,6 +111,22 @@ toggle ligado em Ajustes. Para gravar reuniões de verdade, configure o certific
 | `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID` | Notarização via Apple ID (recomendado) |
 | `APPLE_API_ISSUER` / `APPLE_API_KEY` / `APPLE_API_KEY_PATH` | Notarização via App Store Connect API |
 
+#### Atalho: script de configuração
+
+Com o certificado já no chaveiro (passos 1 a 3 abaixo), o script exporta só a
+identidade de assinatura, confere o arquivo e cadastra os secrets
+`APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD` e `KEYCHAIN_PASSWORD`:
+
+```bash
+scripts/configurar-assinatura.sh            # cadastra no GitHub
+scripts/configurar-assinatura.sh --dry-run  # só gera e confere, sem enviar
+```
+
+Funciona com **Apple Development** (gratuito; release assinada, mas não
+notarizada) e com **Developer ID** (`IDENTITY_PREFIX="Developer ID Application"`).
+Se o certificado aparecer como inválido, instale a intermediária
+[WWDR G3](https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer).
+
 #### Como obter o certificado e configurar
 
 1. Entre no [Apple Developer Program](https://developer.apple.com/programs/) (pago, anual). Conta pessoal serve.
