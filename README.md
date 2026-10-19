@@ -56,7 +56,9 @@ Artefatos:
 - `apps/desktop/src-tauri/target/release/bundle/dmg/Rebobina_*.dmg`
 - `apps/desktop/src-tauri/target/release/bundle/macos/Rebobina.app`
 
-Abra o `.dmg` e arraste **Rebobina** para Aplicativos. Na primeira abertura (app não assinado / ad-hoc): clique direito → Abrir. Autorize **Gravação de tela**, **Microfone** e **Notificações**.
+Abra o `.dmg` e arraste **Rebobina** para Aplicativos. Na primeira abertura (app não assinado / ad-hoc): clique direito → Abrir. Autorize **Gravação de tela**, **Microfone** e **Notificações**, depois **Cmd+Q** e abra de novo.
+
+> **macOS 15+:** captura de áudio do sistema (ScreenCaptureKit) exige build **assinado** com certificado Apple. O DMG ad-hoc das Releases sem `APPLE_CERTIFICATE` pode mostrar Rebobina ligado em Privacidade e mesmo assim recusar a gravação (“usuário recusou os TCCs”). Configure os secrets Apple no Actions para uma release utilizável.
 
 Na raiz: `npm run build`.
 

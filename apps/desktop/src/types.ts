@@ -21,6 +21,10 @@ export interface AudioDeviceInfo {
 
 export interface ScreenPermissionStatus {
   granted: boolean;
+  /** Permissão ligada depois do app abrir — precisa Cmd+Q e reabrir. */
+  needsRelaunch: boolean;
+  /** Build ad-hoc: no macOS 15+ o SCK pode recusar mesmo com o toggle ON. */
+  adhocSigned: boolean;
   hint: string;
 }
 

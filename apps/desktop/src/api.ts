@@ -48,6 +48,7 @@ export const api = {
     invoke<ScreenPermissionStatus>("get_screen_permission"),
   requestScreenPermission: () =>
     invoke<ScreenPermissionStatus>("request_screen_permission"),
+  resetScreenPermission: () => invoke<string>("reset_screen_permission"),
   openScreenSettings: () => invoke<void>("open_screen_settings"),
   getBlackHoleStatus: () => invoke<BlackHoleStatus>("get_blackhole_status"),
   installBlackHole: () => invoke<BlackHoleInstallResult>("install_blackhole"),

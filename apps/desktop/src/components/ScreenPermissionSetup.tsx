@@ -83,9 +83,13 @@ export function ScreenPermissionSetup() {
         <ul className="checklist">
           <li>Clique em “Permitir” e confirme na janela do macOS.</li>
           <li>
-            Se a janela não aparecer, abra os Ajustes e ative o Rebobina em Privacidade → Gravação de tela.
+            Se a janela não aparecer, abra os Ajustes e ative o Rebobina em
+            Privacidade → Gravação de tela.
           </li>
-          <li>Feche e abra o Rebobina de novo para valer.</li>
+          <li>
+            Depois feche o app por completo com <strong>Cmd+Q</strong> e abra de
+            novo (só minimizar não basta).
+          </li>
         </ul>
 
         {message && <p className="ok">{message}</p>}

@@ -124,12 +124,24 @@ export function Settings() {
           <strong>
             {screen == null
               ? "verificando…"
-              : screen.granted
-                ? "permissão concedida"
-                : "permissão necessária"}
+              : screen.needsRelaunch
+                ? "ligada — reinicie o app (Cmd+Q)"
+                : screen.granted
+                  ? screen.adhocSigned
+                    ? "toggle ligado (build ad-hoc — pode falhar no macOS 15+)"
+                    : "permissão concedida"
+                  : "permissão necessária"}
           </strong>
         </p>
         {screen && <p className="muted">{screen.hint}</p>}
+        {screen?.adhocSigned && (
+          <p className="error" style={{ marginTop: 8 }}>
+            Este instalador está assinado de forma ad-hoc. No macOS 15+ o sistema
+            pode mostrar Rebobina ligado em Gravação de tela e mesmo assim
+            recusar a captura. A solução definitiva é um build com certificado
+            Apple (Developer ID) no GitHub Actions.
+          </p>
+        )}
         <div className="row gap">
           {!screen?.granted && (
             <button
@@ -149,6 +161,25 @@ export function Settings() {
             }
           >
             Abrir Ajustes do macOS
+          </button>
+          <button
+            className="btn ghost"
+            type="button"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setError(null);
+              try {
+                setMessage(await api.resetScreenPermission());
+                setScreen(await api.getScreenPermission());
+              } catch (e) {
+                setError(String(e));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Resetar permissão TCC
           </button>
           <button
             className="btn ghost"
