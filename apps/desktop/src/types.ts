@@ -10,6 +10,7 @@ export interface Meeting {
   status: MeetingStatus | string;
   errorMessage: string | null;
   deviceName: string | null;
+  description: string | null;
 }
 
 export interface AudioDeviceInfo {
@@ -74,6 +75,8 @@ export interface TranscriptSegment {
   start: number;
   end: number;
   text: string;
+  /** "me" = microfone (você); "others" = áudio da chamada. */
+  speaker?: "me" | "others" | null;
 }
 
 export interface ActionItem {
@@ -92,4 +95,29 @@ export interface Summary {
   rawMarkdown: string;
   model: string;
   createdAt: string;
+  detailsJson: string | null;
+}
+
+export interface Participant {
+  name: string;
+  role?: string | null;
+}
+
+export interface KeyPoint {
+  topic: string;
+  details: string[];
+}
+
+/** Resumo estruturado completo (campos novos podem faltar em resumos antigos). */
+export interface SummaryDetails {
+  suggested_title?: string;
+  overview?: string;
+  participants?: Participant[];
+  key_points?: KeyPoint[];
+  decisions?: string[];
+  action_items?: ActionItem[];
+  open_questions?: string[];
+  next_steps?: string[];
+  topics?: string[];
+  notable_quotes?: string[];
 }

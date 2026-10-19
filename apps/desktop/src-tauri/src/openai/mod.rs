@@ -71,6 +71,9 @@ pub struct TranscriptSegment {
     pub start: f64,
     pub end: f64,
     pub text: String,
+    /// "me" (microfone) ou "others" (áudio da chamada), quando dá para saber.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,11 +91,47 @@ pub struct ActionItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StructuredSummary {
+    /// Nome curto sugerido para a reunião.
+    #[serde(default)]
+    pub suggested_title: String,
     pub overview: String,
+    #[serde(default)]
+    pub participants: Vec<Participant>,
+    #[serde(default)]
+    pub key_points: Vec<KeyPoint>,
+    #[serde(default)]
     pub decisions: Vec<String>,
+    #[serde(default)]
     pub action_items: Vec<ActionItem>,
+    #[serde(default)]
+    pub open_questions: Vec<String>,
+    #[serde(default)]
+    pub next_steps: Vec<String>,
+    #[serde(default)]
     pub topics: Vec<String>,
+    #[serde(default)]
     pub notable_quotes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Participant {
+    pub name: String,
+    #[serde(default)]
+    pub role: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyPoint {
+    pub topic: String,
+    #[serde(default)]
+    pub details: Vec<String>,
+}
+
+/// O que se sabe da reunião além da transcrição, para orientar o resumo.
+pub struct MeetingContext<'a> {
+    pub title: &'a str,
+    pub description: Option<&'a str>,
+    pub duration_min: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -170,34 +209,60 @@ pub fn transcribe_file(api_key: &str, path: &Path, language: &str) -> AppResult<
                 start: s.start,
                 end: s.end,
                 text: s.text.trim().to_string(),
+                speaker: None,
             })
             .collect(),
     })
 }
 
-pub fn summarize_transcript(api_key: &str, transcript: &str) -> AppResult<(StructuredSummary, String, String)> {
-    let system = r#"Você é um assistente que resume reuniões em português do Brasil.
-Responda APENAS com JSON válido (sem markdown) no formato:
-{
-  "overview": "string",
-  "decisions": ["string"],
-  "action_items": [{"assignee": "string|null", "task": "string", "due": "string|null"}],
-  "topics": ["string"],
-  "notable_quotes": ["string"]
-}
-Seja fiel ao conteúdo. Se algo não aparecer, use lista vazia."#;
+pub const SUMMARY_MODEL: &str = "gpt-4o";
 
-    let user = format!(
-        "Resuma a seguinte transcrição de reunião:\n\n{}",
-        transcript
-    );
+const SUMMARY_PROMPT: &str = r#"Você escreve atas de reunião em português do Brasil para quem não participou e precisa entender tudo o que importa sem ouvir a gravação.
+
+A transcrição pode marcar quem fala: "Você" é a pessoa que gravou (microfone) e "Participante" é qualquer outra pessoa da chamada. Use nomes próprios quando aparecerem na conversa (apresentações, "obrigado, Ana"); não invente nomes.
+
+Responda APENAS com JSON válido (sem markdown), neste formato:
+{
+  "suggested_title": "nome curto e específico da reunião, até 60 caracteres, sem data",
+  "overview": "2 a 5 parágrafos separados por \n\n: objetivo da reunião, contexto, o que foi discutido e como terminou",
+  "participants": [{"name": "nome ou descrição (ex.: Você, Recrutadora)", "role": "papel ou empresa, ou null"}],
+  "key_points": [{"topic": "tema", "details": ["fato, argumento, número ou exemplo concreto dito na reunião"]}],
+  "decisions": ["decisão tomada, com o motivo quando dito"],
+  "action_items": [{"assignee": "responsável ou null", "task": "tarefa específica", "due": "prazo ou null"}],
+  "open_questions": ["dúvida, risco ou ponto que ficou sem resposta"],
+  "next_steps": ["próximo passo combinado"],
+  "topics": ["tema em poucas palavras"],
+  "notable_quotes": ["frase marcante, literal"]
+}
+
+Regras:
+- Seja específico: preserve números, valores, datas, nomes de empresas, ferramentas, tecnologias e prazos citados.
+- key_points: um item por tema relevante, cada um com 2 a 6 detalhes concretos. Reuniões longas costumam ter de 4 a 10 temas.
+- Não generalize ("discutiram vários assuntos"); diga quais e o que foi dito.
+- Seja fiel ao conteúdo. Se algo não aparecer, use lista vazia."#;
+
+pub fn summarize_transcript(
+    api_key: &str,
+    transcript: &str,
+    context: &MeetingContext<'_>,
+) -> AppResult<(StructuredSummary, String, String)> {
+    let mut user = format!("Nome atual da reunião: {}\n", context.title);
+    if let Some(min) = context.duration_min {
+        user.push_str(&format!("Duração: cerca de {min} minutos\n"));
+    }
+    if let Some(desc) = context.description.filter(|d| !d.trim().is_empty()) {
+        user.push_str(&format!("Descrição escrita por quem gravou: {}\n", desc.trim()));
+    }
+    user.push_str("\nTranscrição:\n\n");
+    user.push_str(transcript);
 
     let payload = json!({
-        "model": "gpt-4o",
-        "temperature": 0.2,
+        "model": SUMMARY_MODEL,
+        "temperature": 0.3,
+        "max_tokens": 4096,
         "response_format": { "type": "json_object" },
         "messages": [
-            { "role": "system", "content": system },
+            { "role": "system", "content": SUMMARY_PROMPT },
             { "role": "user", "content": user }
         ]
     });
@@ -226,54 +291,83 @@ Seja fiel ao conteúdo. Se algo não aparecer, use lista vazia."#;
     match serde_json::from_str::<StructuredSummary>(&content) {
         Ok(structured) => {
             let markdown = to_markdown(&structured);
-            Ok((structured, markdown, "gpt-4o".into()))
+            Ok((structured, markdown, SUMMARY_MODEL.into()))
         }
         Err(_) => {
             let fallback = StructuredSummary {
+                suggested_title: String::new(),
                 overview: content.clone(),
+                participants: vec![],
+                key_points: vec![],
                 decisions: vec![],
                 action_items: vec![],
+                open_questions: vec![],
+                next_steps: vec![],
                 topics: vec![],
                 notable_quotes: vec![],
             };
-            Ok((fallback, content, "gpt-4o".into()))
+            Ok((fallback, content, SUMMARY_MODEL.into()))
         }
     }
 }
 
 fn to_markdown(summary: &StructuredSummary) -> String {
+    fn list(md: &mut String, title: &str, items: &[String], empty: &str) {
+        md.push_str(&format!("\n## {title}\n\n"));
+        if items.is_empty() {
+            md.push_str(&format!("- ({empty})\n"));
+        }
+        for item in items {
+            md.push_str(&format!("- {item}\n"));
+        }
+    }
+
     let mut md = String::new();
     md.push_str("## Visão geral\n\n");
-    md.push_str(&summary.overview);
-    md.push_str("\n\n## Decisões\n\n");
-    if summary.decisions.is_empty() {
-        md.push_str("- (nenhuma)\n");
-    } else {
-        for d in &summary.decisions {
-            md.push_str(&format!("- {d}\n"));
+    md.push_str(summary.overview.trim());
+    md.push('\n');
+
+    if !summary.participants.is_empty() {
+        md.push_str("\n## Participantes\n\n");
+        for p in &summary.participants {
+            match p.role.as_deref().filter(|r| !r.is_empty()) {
+                Some(role) => md.push_str(&format!("- {} — {role}\n", p.name)),
+                None => md.push_str(&format!("- {}\n", p.name)),
+            }
         }
     }
-    md.push_str("\n## Action items\n\n");
+
+    if !summary.key_points.is_empty() {
+        md.push_str("\n## Pontos principais\n");
+        for kp in &summary.key_points {
+            md.push_str(&format!("\n### {}\n\n", kp.topic));
+            for d in &kp.details {
+                md.push_str(&format!("- {d}\n"));
+            }
+        }
+    }
+
+    list(&mut md, "Decisões", &summary.decisions, "nenhuma");
+
+    md.push_str("\n## Tarefas\n\n");
     if summary.action_items.is_empty() {
-        md.push_str("- (nenhum)\n");
-    } else {
-        for item in &summary.action_items {
-            let who = item.assignee.as_deref().unwrap_or("não atribuído");
-            let due = item
-                .due
-                .as_ref()
-                .map(|d| format!(" (prazo: {d})"))
-                .unwrap_or_default();
-            md.push_str(&format!("- [{}] {}{}\n", who, item.task, due));
-        }
+        md.push_str("- (nenhuma)\n");
     }
-    md.push_str("\n## Tópicos\n\n");
-    if summary.topics.is_empty() {
-        md.push_str("- (nenhum)\n");
-    } else {
-        for t in &summary.topics {
-            md.push_str(&format!("- {t}\n"));
-        }
+    for item in &summary.action_items {
+        let who = item.assignee.as_deref().unwrap_or("sem responsável");
+        let due = item
+            .due
+            .as_ref()
+            .map(|d| format!(" (prazo: {d})"))
+            .unwrap_or_default();
+        md.push_str(&format!("- [{who}] {}{due}\n", item.task));
+    }
+
+    if !summary.open_questions.is_empty() {
+        list(&mut md, "Perguntas em aberto", &summary.open_questions, "nenhuma");
+    }
+    if !summary.next_steps.is_empty() {
+        list(&mut md, "Próximos passos", &summary.next_steps, "nenhum");
     }
     md
 }

@@ -1,5 +1,6 @@
 use crate::error::{AppError, AppResult};
-use crate::openai::{self, TranscriptSegment, TranscriptionResult};
+use crate::openai::{self, MeetingContext, TranscriptSegment, TranscriptionResult};
+use crate::speakers::{self, SpeakerLevels};
 use crate::storage::{Storage, Summary};
 use chrono::Utc;
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
@@ -32,7 +33,7 @@ pub fn process_meeting(storage: &Storage, meeting_id: &str) -> AppResult<()> {
 
     storage.set_status(meeting_id, "processing", None)?;
 
-    let transcription = match transcribe_with_chunking(&api_key, &audio_path, &language) {
+    let mut transcription = match transcribe_with_chunking(&api_key, &audio_path, &language) {
         Ok(t) => t,
         Err(e) => {
             storage.set_status(meeting_id, "error", Some(&e.to_string()))?;
@@ -40,10 +41,33 @@ pub fn process_meeting(storage: &Storage, meeting_id: &str) -> AppResult<()> {
         }
     };
 
+    if let Some(levels) = SpeakerLevels::load_for(&audio_path) {
+        levels.label_segments(&mut transcription.segments);
+    }
+
     let segments_json = serde_json::to_string(&transcription.segments)?;
     storage.save_transcript(meeting_id, &transcription.text, &segments_json)?;
 
-    if transcription.text.trim().is_empty() {
+    summarize_and_save(storage, &api_key, meeting_id)
+}
+
+/// Refaz só o resumo, a partir da transcrição já salva (sem reenviar o áudio).
+pub fn regenerate_summary(storage: &Storage, meeting_id: &str) -> AppResult<()> {
+    let api_key = Storage::get_api_key()?
+        .ok_or_else(|| AppError::Message("Configure a API key da OpenAI em Configurações".into()))?;
+    storage.set_status(meeting_id, "processing", None)?;
+    summarize_and_save(storage, &api_key, meeting_id)
+}
+
+fn summarize_and_save(storage: &Storage, api_key: &str, meeting_id: &str) -> AppResult<()> {
+    let meeting = storage
+        .get_meeting(meeting_id)?
+        .ok_or_else(|| AppError::Message("Reunião não encontrada".into()))?;
+    let transcript = storage
+        .get_transcript(meeting_id)?
+        .ok_or_else(|| AppError::Message("Reunião ainda sem transcrição".into()))?;
+
+    if transcript.full_text.trim().is_empty() {
         let empty = Summary {
             meeting_id: meeting_id.to_string(),
             overview: "A gravação não contém fala detectável.".into(),
@@ -52,19 +76,29 @@ pub fn process_meeting(storage: &Storage, meeting_id: &str) -> AppResult<()> {
             topics_json: "[]".into(),
             notable_quotes_json: "[]".into(),
             raw_markdown: "## Visão geral\n\nA gravação não contém fala detectável.\n".into(),
-            model: "gpt-4o".into(),
+            model: openai::SUMMARY_MODEL.into(),
             created_at: Utc::now().to_rfc3339(),
+            details_json: None,
         };
         storage.save_summary(&empty)?;
         storage.set_status(meeting_id, "ready", None)?;
         return Ok(());
     }
 
-    match openai::summarize_transcript(&api_key, &transcription.text) {
+    let segments: Vec<TranscriptSegment> =
+        serde_json::from_str(&transcript.segments_json).unwrap_or_default();
+    let text = transcript_for_summary(&segments, &transcript.full_text);
+    let context = MeetingContext {
+        title: &meeting.title,
+        description: meeting.description.as_deref(),
+        duration_min: meeting.duration_sec.map(|s| (s + 59) / 60),
+    };
+
+    match openai::summarize_transcript(api_key, &text, &context) {
         Ok((structured, markdown, model)) => {
             let summary = Summary {
                 meeting_id: meeting_id.to_string(),
-                overview: structured.overview,
+                overview: structured.overview.clone(),
                 decisions_json: serde_json::to_string(&structured.decisions)?,
                 action_items_json: serde_json::to_string(&structured.action_items)?,
                 topics_json: serde_json::to_string(&structured.topics)?,
@@ -72,8 +106,15 @@ pub fn process_meeting(storage: &Storage, meeting_id: &str) -> AppResult<()> {
                 raw_markdown: markdown,
                 model,
                 created_at: Utc::now().to_rfc3339(),
+                details_json: Some(serde_json::to_string(&structured)?),
             };
             storage.save_summary(&summary)?;
+
+            let suggested = structured.suggested_title.trim();
+            if !suggested.is_empty() && is_default_title(&meeting.title) {
+                storage.set_title(meeting_id, suggested)?;
+            }
+
             storage.set_status(meeting_id, "ready", None)?;
             Ok(())
         }
@@ -82,6 +123,43 @@ pub fn process_meeting(storage: &Storage, meeting_id: &str) -> AppResult<()> {
             Err(e)
         }
     }
+}
+
+/// Título gerado automaticamente ao começar sem nome ("Reunião 2026-10-19 20:04").
+pub fn is_default_title(title: &str) -> bool {
+    let Some(rest) = title.trim().strip_prefix("Reunião ") else {
+        return false;
+    };
+    rest.len() == 16
+        && rest
+            .chars()
+            .enumerate()
+            .all(|(i, c)| match i {
+                4 | 7 => c == '-',
+                10 => c == ' ',
+                13 => c == ':',
+                _ => c.is_ascii_digit(),
+            })
+}
+
+/// Transcrição com tempo e quem fala, quando os trechos têm essa informação.
+fn transcript_for_summary(segments: &[TranscriptSegment], full_text: &str) -> String {
+    if segments.iter().all(|s| s.speaker.is_none()) {
+        return full_text.to_string();
+    }
+    segments
+        .iter()
+        .map(|s| {
+            let who = match s.speaker.as_deref() {
+                Some(speakers::SPEAKER_ME) => "Você",
+                Some(_) => "Participante",
+                None => "?",
+            };
+            let t = s.start.max(0.0) as u64;
+            format!("[{:02}:{:02}] {who}: {}", t / 60, t % 60, s.text)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn transcribe_with_chunking(
@@ -109,6 +187,7 @@ fn transcribe_with_chunking(
                     start: seg.start + offset,
                     end: seg.end + offset,
                     text: seg.text,
+                    speaker: None,
                 });
             }
             offset += chunk_duration_seconds(chunk_path)?;
@@ -280,6 +359,11 @@ pub fn export_markdown(storage: &Storage, meeting_id: &str) -> AppResult<String>
     }
     md.push('\n');
 
+    if let Some(desc) = meeting.description.as_deref().filter(|d| !d.trim().is_empty()) {
+        md.push_str(desc.trim());
+        md.push_str("\n\n");
+    }
+
     if let Some(s) = summary {
         md.push_str(&s.raw_markdown);
         md.push_str("\n\n");
@@ -287,7 +371,10 @@ pub fn export_markdown(storage: &Storage, meeting_id: &str) -> AppResult<String>
 
     if let Some(t) = transcript {
         md.push_str("## Transcrição\n\n");
-        md.push_str(&t.full_text);
+        let segments: Vec<TranscriptSegment> =
+            serde_json::from_str(&t.segments_json).unwrap_or_default();
+        // Linha em branco entre falas para o Markdown não juntar tudo num parágrafo.
+        md.push_str(&transcript_for_summary(&segments, &t.full_text).replace('\n', "\n\n"));
         md.push('\n');
     }
 
@@ -357,6 +444,23 @@ mod tests {
         }
         assert!((total - 3.0).abs() < 0.01, "duração total {total}");
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn detects_only_the_automatic_title() {
+        assert!(is_default_title("Reunião 2026-10-19 20:04"));
+        assert!(!is_default_title("Reunião de planejamento"));
+        assert!(!is_default_title("Daily 2026-10-19 20:04"));
+    }
+
+    #[test]
+    fn summary_text_marks_who_speaks() {
+        let segments = vec![
+            TranscriptSegment { start: 3.0, end: 5.0, text: "Oi, tudo bem?".into(), speaker: Some("me".into()) },
+            TranscriptSegment { start: 65.0, end: 70.0, text: "Tudo ótimo.".into(), speaker: Some("others".into()) },
+        ];
+        let text = transcript_for_summary(&segments, "ignorado");
+        assert_eq!(text, "[00:03] Você: Oi, tudo bem?\n[01:05] Participante: Tudo ótimo.");
     }
 
     #[test]

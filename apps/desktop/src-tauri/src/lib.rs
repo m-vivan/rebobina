@@ -4,6 +4,7 @@ mod error;
 mod meeting_detect;
 mod openai;
 mod pipeline;
+mod speakers;
 mod storage;
 
 use audio::{
@@ -28,7 +29,10 @@ pub struct AppState {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LevelPayload {
+    /// Maior entre microfone e chamada (compatível com versões anteriores da tela).
     level: f32,
+    mic: f32,
+    system: f32,
     meeting_id: String,
 }
 
@@ -183,11 +187,13 @@ fn start_recording(
             if state.recorder.current_meeting_id().as_deref() != Some(meeting_id.as_str()) {
                 break;
             }
-            let level = state.recorder.peak_level();
+            let (mic, system) = state.recorder.take_levels();
             let _ = app.emit(
                 "recording-level",
                 LevelPayload {
-                    level,
+                    level: mic.max(system),
+                    mic,
+                    system,
                     meeting_id: meeting_id.clone(),
                 },
             );
@@ -197,6 +203,12 @@ fn start_recording(
     });
 
     Ok(meeting)
+}
+
+// `async`: roda fora da thread principal; abrir um dispositivo de áudio pode demorar.
+#[tauri::command(async)]
+fn switch_microphone(state: State<'_, AppState>, device_name: Option<String>) -> AppResult<()> {
+    state.recorder.switch_microphone(device_name.as_deref())
 }
 
 #[tauri::command]
@@ -233,6 +245,49 @@ fn retry_processing(
 
     state.storage.set_status(&meeting_id, "processing", None)?;
     spawn_pipeline(app, state.storage.clone(), meeting_id);
+    Ok(())
+}
+
+#[tauri::command]
+fn update_meeting(
+    state: State<'_, AppState>,
+    meeting_id: String,
+    title: String,
+    description: Option<String>,
+) -> AppResult<Meeting> {
+    state
+        .storage
+        .update_meeting_details(&meeting_id, &title, description.as_deref())?;
+    state
+        .storage
+        .get_meeting(&meeting_id)?
+        .ok_or_else(|| AppError::Message("Reunião não encontrada".into()))
+}
+
+#[tauri::command]
+fn regenerate_summary(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    meeting_id: String,
+) -> AppResult<()> {
+    if state.storage.get_transcript(&meeting_id)?.is_none() {
+        return Err(AppError::Message("Reunião ainda sem transcrição".into()));
+    }
+    state.storage.set_status(&meeting_id, "processing", None)?;
+    let storage = state.storage.clone();
+    std::thread::spawn(move || {
+        match pipeline::regenerate_summary(&storage, &meeting_id) {
+            Ok(()) => {
+                let _ = app.emit("meeting-processed", meeting_id);
+            }
+            Err(e) => {
+                let _ = app.emit(
+                    "meeting-process-error",
+                    serde_json::json!({ "meetingId": meeting_id, "error": e.to_string() }),
+                );
+            }
+        }
+    });
     Ok(())
 }
 
@@ -320,6 +375,9 @@ pub fn run() {
             start_recording,
             stop_recording,
             retry_processing,
+            update_meeting,
+            switch_microphone,
+            regenerate_summary,
             export_meeting_markdown,
             save_export_file,
             get_data_dir,
