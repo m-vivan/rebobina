@@ -94,12 +94,6 @@ Assinatura Apple é **opcional**. Sem secrets, o build usa assinatura ad-hoc. Se
 3. Inicie a gravação (ou aceite a notificação ao detectar uma call)
 4. Pare e rebobine — o app transcreve (Lado A, Whisper) e resume (Lado B, GPT-4o)
 
-## Dados locais
-
-`~/Library/Application Support/rebobina/`
-
-(Se você usava a pasta antiga `gravador`, ela é migrada automaticamente na primeira abertura.)
-
 ## Contribuindo
 
 Quer ajudar? Veja [CONTRIBUTING.md](CONTRIBUTING.md) para setup, branch, commits e expectativas de PR/CI.
