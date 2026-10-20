@@ -1,6 +1,6 @@
 [package]
 name = "rebobina"
-version = "0.2.2"
+version = "0.2.3"
 description = "Grave reuniões no Mac, transcreva e resuma com IA"
 authors = ["vivan"]
 edition = "2021"
