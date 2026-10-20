@@ -4,13 +4,18 @@ App macOS para gravar reuniões localmente, transcrever e resumir com IA (OpenAI
 
 Captura **microfone + áudio do sistema** via ScreenCaptureKit — sem bot na call e sem BlackHole.
 
+<p align="center">
+  <img src="docs/img/home.png" alt="Tela inicial do Rebobina: gravar uma reunião e lista de reuniões" width="49%">
+  <img src="docs/img/recording.png" alt="Tela de gravação: fita cassete animada, contador e medidores de quem está falando" width="49%">
+</p>
+
 ## Identidade
 
 - **Nome:** Rebobina (antes Gravador). Grava a reunião e depois deixa você voltar ao que importa, como rebobinar uma fita K7.
 - **Marca:** fita cassete com o carretel esquerdo em vermelho REC e três listras de etiqueta
 - **Paleta:** Fita `#1E1714`, Casco `#2A211C`, Etiqueta `#EADFC6`, REC `#E8402A`, Âmbar `#F2A23A`, Petróleo `#2F8F87`
 - **Tipografia:** Archivo Expanded Black (títulos) · Figtree (texto) · VT323 (contador) · Caveat (títulos das fitas)
-- **Arquivos:** [`brand/`](brand/) — símbolo, ícone e guia de identidade (`rebobina-identidade.html`)
+- **Arquivos:** [`brand/`](brand/) — símbolo, ícone e [guia de identidade](brand/rebobina-identidade.html)
 
 Identificadores: bundle/keychain `dev.vivan.rebobina` (domínio [vivan.dev](https://vivan.dev)), pasta de dados `~/Library/Application Support/rebobina/`. Na primeira abertura o app migra dados/API key legados de `gravador` / `com.vivan.gravador`, se existirem. **É preciso autorizar de novo** Gravação de tela para o novo bundle ID.
 
