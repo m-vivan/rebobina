@@ -18,7 +18,7 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 const SAMPLE_RATE: u32 = 48_000;
 
@@ -48,6 +48,9 @@ struct CaptureShared {
     mic_samples: AtomicU64,
     system_samples: AtomicU64,
     stop: AtomicBool,
+    /// Pausada: as amostras que chegam são descartadas nas duas faixas, que
+    /// continuam alinhadas e retomam juntas.
+    paused: AtomicBool,
 }
 
 struct CaptureHandler {
@@ -56,7 +59,7 @@ struct CaptureHandler {
 
 impl SCStreamOutputTrait for CaptureHandler {
     fn did_output_sample_buffer(&self, sample: CMSampleBuffer, output_type: SCStreamOutputType) {
-        if self.shared.stop.load(Ordering::Relaxed) {
+        if self.shared.stop.load(Ordering::Relaxed) || self.shared.paused.load(Ordering::Relaxed) {
             return;
         }
         match output_type {
@@ -92,10 +95,50 @@ struct ActiveRecording {
     mic_stream: Option<SendStream>,
     shared: Arc<CaptureShared>,
     started_at: Instant,
+    /// Desde quando está pausada (None = gravando).
+    paused_at: Option<Instant>,
+    /// Soma das pausas já encerradas.
+    paused_total: Duration,
     meeting_id: String,
     output_path: PathBuf,
     system_path: PathBuf,
     mic_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingStatus {
+    pub meeting_id: String,
+    pub paused: bool,
+    /// Segundos efetivamente gravados (sem as pausas).
+    pub elapsed_sec: u64,
+}
+
+/// Tempo entre `started` e `now`, menos as pausas encerradas e a pausa em curso.
+fn recorded_between(
+    started: Instant,
+    paused_total: Duration,
+    paused_at: Option<Instant>,
+    now: Instant,
+) -> Duration {
+    let paused_now = paused_at.map(|t| now.saturating_duration_since(t)).unwrap_or_default();
+    now.saturating_duration_since(started)
+        .saturating_sub(paused_total + paused_now)
+}
+
+impl ActiveRecording {
+    /// Tempo gravado até agora, descontando as pausas.
+    fn recorded(&self) -> Duration {
+        recorded_between(self.started_at, self.paused_total, self.paused_at, Instant::now())
+    }
+
+    fn status(&self) -> RecordingStatus {
+        RecordingStatus {
+            meeting_id: self.meeting_id.clone(),
+            paused: self.paused_at.is_some(),
+            elapsed_sec: self.recorded().as_secs(),
+        }
+    }
 }
 
 pub struct Recorder {
@@ -209,6 +252,7 @@ impl Recorder {
             mic_samples: AtomicU64::new(0),
             system_samples: AtomicU64::new(0),
             stop: AtomicBool::new(false),
+            paused: AtomicBool::new(false),
         });
 
         let content = SCShareableContent::get().map_err(|e| {
@@ -315,6 +359,8 @@ impl Recorder {
             mic_stream,
             shared,
             started_at: Instant::now(),
+            paused_at: None,
+            paused_total: Duration::ZERO,
             meeting_id: meeting_id.to_string(),
             output_path: output_path.to_path_buf(),
             system_path,
@@ -322,6 +368,37 @@ impl Recorder {
         });
 
         Ok(())
+    }
+
+    /// Para de gravar sem encerrar: o que chegar durante a pausa não entra no áudio.
+    pub fn pause(&self) -> AppResult<RecordingStatus> {
+        let mut guard = self.active.lock();
+        let active = guard
+            .as_mut()
+            .ok_or_else(|| AppError::Audio("Nenhuma gravação ativa".into()))?;
+        if active.paused_at.is_none() {
+            active.shared.paused.store(true, Ordering::Relaxed);
+            active.paused_at = Some(Instant::now());
+        }
+        Ok(active.status())
+    }
+
+    pub fn resume(&self) -> AppResult<RecordingStatus> {
+        let mut guard = self.active.lock();
+        let active = guard
+            .as_mut()
+            .ok_or_else(|| AppError::Audio("Nenhuma gravação ativa".into()))?;
+        if let Some(since) = active.paused_at.take() {
+            active.paused_total += since.elapsed();
+            // Se uma faixa ficou um pouco atrás no instante da pausa, alinha antes de retomar.
+            pad_mic_to_system(&active.shared);
+            active.shared.paused.store(false, Ordering::Relaxed);
+        }
+        Ok(active.status())
+    }
+
+    pub fn status(&self) -> Option<RecordingStatus> {
+        self.active.lock().as_ref().map(ActiveRecording::status)
     }
 
     /// Troca o microfone sem interromper a gravação. `None` volta ao padrão do sistema.
@@ -375,7 +452,8 @@ impl Recorder {
             .ok_or_else(|| AppError::Audio("Nenhuma gravação ativa".into()))?;
 
         active.shared.stop.store(true, Ordering::Relaxed);
-        let duration_sec = active.started_at.elapsed().as_secs() as i64;
+        // Só o tempo gravado, sem as pausas.
+        let duration_sec = active.recorded().as_secs() as i64;
         let meeting_id = active.meeting_id.clone();
         let output_path = active.output_path.clone();
         let system_path = active.system_path.clone();
@@ -561,7 +639,9 @@ fn start_cpal_mic(
                 .build_input_stream(
                     &stream_config,
                     move |data: &[f32], _| {
-                        if shared_cb.stop.load(Ordering::Relaxed) {
+                        if shared_cb.stop.load(Ordering::Relaxed)
+                            || shared_cb.paused.load(Ordering::Relaxed)
+                        {
                             return;
                         }
                         let mono = downmix_and_resample_f32(data, channels, in_rate, SAMPLE_RATE);
@@ -583,7 +663,9 @@ fn start_cpal_mic(
                 .build_input_stream(
                     &stream_config,
                     move |data: &[i16], _| {
-                        if shared_cb.stop.load(Ordering::Relaxed) {
+                        if shared_cb.stop.load(Ordering::Relaxed)
+                            || shared_cb.paused.load(Ordering::Relaxed)
+                        {
                             return;
                         }
                         let f: Vec<f32> = data.iter().map(|&s| s as f32 / i16::MAX as f32).collect();
@@ -686,6 +768,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn recorded_time_skips_pauses() {
+        let start = Instant::now();
+        let at = |s: u64| start + Duration::from_secs(s);
+        // 100 s desde o início, 20 s de pausas já encerradas: 80 s gravados.
+        assert_eq!(recorded_between(start, Duration::from_secs(20), None, at(100)).as_secs(), 80);
+        // Pausada desde 90 s: o tempo para de contar.
+        assert_eq!(
+            recorded_between(start, Duration::from_secs(20), Some(at(90)), at(100)).as_secs(),
+            70
+        );
+        assert_eq!(
+            recorded_between(start, Duration::from_secs(20), Some(at(90)), at(500)).as_secs(),
+            70
+        );
+    }
+
+    #[test]
     fn pads_mic_track_after_switching_microphone() {
         let dir = std::env::temp_dir().join(format!("rebobina-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -705,6 +804,7 @@ mod tests {
             mic_samples: AtomicU64::new(0),
             system_samples: AtomicU64::new(0),
             stop: AtomicBool::new(false),
+            paused: AtomicBool::new(false),
         };
 
         // Microfone gravou 1 s, sistema 1,5 s: a pausa da troca vira silêncio.

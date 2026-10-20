@@ -11,7 +11,7 @@ mod storage;
 use audio::{
     ensure_screen_permission, init_screen_permission_baseline, open_screen_privacy_settings,
     reset_screen_permission_tcc, screen_permission_status, AudioDeviceInfo, Recorder,
-    ScreenPermissionStatus,
+    RecordingStatus, ScreenPermissionStatus,
 };
 use blackhole::{BlackHoleStatus, InstallResult};
 use chrono::Utc;
@@ -213,20 +213,47 @@ fn switch_microphone(state: State<'_, AppState>, device_name: Option<String>) ->
 }
 
 #[tauri::command]
-fn stop_recording(app: AppHandle, state: State<'_, AppState>) -> AppResult<Meeting> {
+/// `process` falso: só salva o áudio ("Parar"); a transcrição e o resumo ficam
+/// para quando a pessoa pedir ("Rebobinar" no detalhe da reunião).
+fn stop_recording(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    process: Option<bool>,
+) -> AppResult<Meeting> {
+    let process = process.unwrap_or(true);
     let (meeting_id, path, duration_sec) = state.recorder.stop()?;
     let ended_at = Utc::now();
     state
         .storage
         .finish_recording(&meeting_id, &path, ended_at, duration_sec)?;
+    if !process {
+        state.storage.set_status(&meeting_id, "saved", None)?;
+    }
 
     let meeting = state
         .storage
         .get_meeting(&meeting_id)?
         .ok_or_else(|| AppError::Message("Reunião não encontrada após gravar".into()))?;
 
-    spawn_pipeline(app, state.storage.clone(), meeting_id);
+    if process {
+        spawn_pipeline(app, state.storage.clone(), meeting_id);
+    }
     Ok(meeting)
+}
+
+#[tauri::command]
+fn pause_recording(state: State<'_, AppState>) -> AppResult<RecordingStatus> {
+    state.recorder.pause()
+}
+
+#[tauri::command]
+fn resume_recording(state: State<'_, AppState>) -> AppResult<RecordingStatus> {
+    state.recorder.resume()
+}
+
+#[tauri::command]
+fn get_recording_status(state: State<'_, AppState>) -> AppResult<Option<RecordingStatus>> {
+    Ok(state.recorder.status())
 }
 
 #[tauri::command]
@@ -393,6 +420,9 @@ pub fn run() {
             retry_processing,
             update_meeting,
             switch_microphone,
+            pause_recording,
+            resume_recording,
+            get_recording_status,
             regenerate_summary,
             export_meeting_markdown,
             save_export_file,

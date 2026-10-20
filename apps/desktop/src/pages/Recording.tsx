@@ -18,7 +18,10 @@ export function Recording() {
   const [tick, setTick] = useState(0);
   const [lastHeardAt, setLastHeardAt] = useState(() => Date.now());
   const [error, setError] = useState<string | null>(null);
-  const [stopping, setStopping] = useState(false);
+  // Qual botão de parar foi usado ("save" = só salvar; "process" = rebobinar).
+  const [stopping, setStopping] = useState<"save" | "process" | null>(null);
+  const [paused, setPaused] = useState(false);
+  const [toggling, setToggling] = useState(false);
   const { devices, refreshDevices } = useAudioDevices(4000);
   // Microfone em uso na gravação (separado da escolha automática do hook).
   const [activeMic, setActiveMic] = useState<string>("");
@@ -31,18 +34,30 @@ export function Recording() {
       .then((m) => {
         setMeeting(m);
         setActiveMic((prev) => prev || m?.deviceName || "");
-        if (m?.startedAt) {
-          const start = new Date(m.startedAt).getTime();
-          setElapsed(Math.max(0, Math.floor((Date.now() - start) / 1000)));
-        }
       })
       .catch((e) => setError(String(e)));
   }, [id]);
 
+  // Tempo e pausa vêm do backend, que desconta o tempo pausado.
   useEffect(() => {
-    const timer = setInterval(() => setElapsed((v) => v + 1), 1000);
-    return () => clearInterval(timer);
-  }, []);
+    let alive = true;
+    async function sync() {
+      try {
+        const status = await api.getRecordingStatus();
+        if (!alive || !status || status.meetingId !== id) return;
+        setElapsed(status.elapsedSec);
+        setPaused(status.paused);
+      } catch {
+        // Fora do Tauri não há gravação para acompanhar.
+      }
+    }
+    void sync();
+    const timer = setInterval(sync, 1000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [id]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -82,20 +97,36 @@ export function Recording() {
     }
   }
 
-  async function onStop() {
-    setStopping(true);
+  async function onTogglePause() {
+    setToggling(true);
     setError(null);
     try {
-      const m = await api.stopRecording();
-      navigate(`/meeting/${m.id}`);
+      const status = paused ? await api.resumeRecording() : await api.pauseRecording();
+      setPaused(status.paused);
+      setElapsed(status.elapsedSec);
+      if (!status.paused) setLastHeardAt(Date.now());
     } catch (e) {
       setError(String(e));
-      setStopping(false);
+    } finally {
+      setToggling(false);
     }
   }
 
-  const activity = Math.max(levels.mic, levels.system);
-  const silentForAWhile = Date.now() - lastHeardAt > 6000;
+  async function onStop(process: boolean) {
+    setStopping(process ? "process" : "save");
+    setError(null);
+    try {
+      const m = await api.stopRecording(process);
+      navigate(`/meeting/${m.id}`);
+    } catch (e) {
+      setError(String(e));
+      setStopping(null);
+    }
+  }
+
+  const activity = paused ? 0 : Math.max(levels.mic, levels.system);
+  const silentForAWhile = !paused && Date.now() - lastHeardAt > 6000;
+  const busy = stopping !== null;
 
   const title = meeting?.title ?? "Reunião";
   const micMissing = !!activeMic && !devices.some((d) => d.name === activeMic);
@@ -111,24 +142,35 @@ export function Recording() {
       <section className="panel deck">
         <div className="deck-head">
           <div className="deck-title">
-            <p className="eyebrow live">● Gravando</p>
+            {paused ? (
+              <p className="eyebrow paused">❚❚ Pausada</p>
+            ) : (
+              <p className="eyebrow live">● Gravando</p>
+            )}
             <h1>{title}</h1>
           </div>
-          <p className="timer" aria-label="Tempo de gravação">
+          <p className={`timer ${paused ? "is-paused" : ""}`} aria-label="Tempo gravado">
             {formatDuration(elapsed)}
           </p>
         </div>
 
         <div className="deck-body">
-          <CassetteAnimation recording activity={activity} label={title} />
+          <CassetteAnimation
+            recording={!paused}
+            paused={paused}
+            activity={activity}
+            label={title}
+          />
           <div className="speech-meters" aria-label="Quem está falando">
-            <SpeechMeter label="Você" level={levels.mic} tick={tick} />
-            <SpeechMeter label="Chamada" level={levels.system} tick={tick} />
+            <SpeechMeter label="Você" level={paused ? 0 : levels.mic} tick={tick} />
+            <SpeechMeter label="Chamada" level={paused ? 0 : levels.system} tick={tick} />
           </div>
           <p className="muted vu-hint">
-            {silentForAWhile
-              ? "Ainda não estamos ouvindo nada. Fale algo ou confira se o som da chamada está ligado."
-              : "As barras se mexem quando alguém fala. Tudo está sendo gravado."}
+            {paused
+              ? "Gravação pausada. Nada do que for dito agora entra na gravação."
+              : silentForAWhile
+                ? "Ainda não estamos ouvindo nada. Fale algo ou confira se o som da chamada está ligado."
+                : "As barras se mexem quando alguém fala. Tudo está sendo gravado."}
           </p>
         </div>
 
@@ -138,7 +180,7 @@ export function Recording() {
             <select
               id="recording-mic"
               value={activeMic}
-              disabled={switchingMic || stopping}
+              disabled={switchingMic || busy}
               onChange={(e) => void onSwitchMic(e.target.value)}
               onFocus={() => void refreshDevices()}
             >
@@ -157,14 +199,34 @@ export function Recording() {
             {switchingMic && <span className="muted">Trocando…</span>}
           </label>
 
-          <button
-            className="btn primary stop large"
-            type="button"
-            onClick={onStop}
-            disabled={stopping}
-          >
-            {stopping ? "Parando…" : "Parar e rebobinar"}
-          </button>
+          <div className="deck-buttons">
+            <button
+              className={`btn ${paused ? "resume" : "pause"}`}
+              type="button"
+              onClick={onTogglePause}
+              disabled={toggling || busy}
+            >
+              {paused ? "Retomar" : "Pausar"}
+            </button>
+            <button
+              className="btn"
+              type="button"
+              onClick={() => onStop(false)}
+              disabled={busy}
+              title="Salva a gravação sem transcrever. Você pode rebobinar depois."
+            >
+              {stopping === "save" ? "Parando…" : "Parar"}
+            </button>
+            <button
+              className="btn primary stop large"
+              type="button"
+              onClick={() => onStop(true)}
+              disabled={busy}
+              title="Salva, transcreve e resume a reunião"
+            >
+              {stopping === "process" ? "Parando…" : "Parar e rebobinar"}
+            </button>
+          </div>
         </div>
 
         {error && <p className="error">{error}</p>}

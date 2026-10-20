@@ -6,6 +6,7 @@ import type {
   BlackHoleStatus,
   DetectedCall,
   Meeting,
+  RecordingStatus,
   ScreenPermissionStatus,
   Summary,
   Transcript,
@@ -33,7 +34,11 @@ export const api = {
       title,
       deviceName: deviceName ?? null,
     }),
-  stopRecording: () => invoke<Meeting>("stop_recording"),
+  /** `process` falso só salva o áudio; verdadeiro também transcreve e resume. */
+  stopRecording: (process = true) => invoke<Meeting>("stop_recording", { process }),
+  pauseRecording: () => invoke<RecordingStatus>("pause_recording"),
+  resumeRecording: () => invoke<RecordingStatus>("resume_recording"),
+  getRecordingStatus: () => invoke<RecordingStatus | null>("get_recording_status"),
   switchMicrophone: (deviceName: string | null) =>
     invoke<void>("switch_microphone", { deviceName }),
   retryProcessing: (meetingId: string) =>

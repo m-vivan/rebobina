@@ -43,6 +43,8 @@ export function statusLabel(status: string): string {
   switch (status) {
     case "recording":
       return "Gravando";
+    case "saved":
+      return "Gravada";
     case "processing":
       return "Rebobinando";
     case "ready":

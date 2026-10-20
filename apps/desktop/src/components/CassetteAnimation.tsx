@@ -8,6 +8,8 @@ type Props = {
    * aceleram enquanto alguém fala e desaceleram no silêncio.
    */
   activity?: number;
+  /** Pausada: os carretéis desaceleram até parar. */
+  paused?: boolean;
   /** Texto escrito à mão na etiqueta. */
   label?: string;
   className?: string;
@@ -52,12 +54,15 @@ const LABEL_MAX = 22;
 export function CassetteAnimation({
   recording = false,
   activity,
+  paused = false,
   label = "Lado A",
   className = "",
 }: Props) {
   const reels = useRef<(SVGGElement | null)[]>([]);
   const activityRef = useRef(activity ?? 0);
   activityRef.current = activity ?? 0;
+  const pausedRef = useRef(paused);
+  pausedRef.current = paused;
   const driven = activity !== undefined;
 
   // Gira os carretéis por script para a velocidade variar sem saltos.
@@ -72,7 +77,9 @@ export function CassetteAnimation({
       const dt = Math.min(0.1, (now - last) / 1000);
       last = now;
       // Graus por segundo: devagar no silêncio, rápido com fala.
-      const target = 60 + 520 * Math.min(1, Math.sqrt(activityRef.current) * 1.6);
+      const target = pausedRef.current
+        ? 0
+        : 60 + 520 * Math.min(1, Math.sqrt(activityRef.current) * 1.6);
       speed += (target - speed) * Math.min(1, dt * 6);
       angle = (angle - speed * dt) % 360;
       // Via CSS (com transform-box: fill-box) e não pelo atributo do SVG:
