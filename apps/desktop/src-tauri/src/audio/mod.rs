@@ -453,7 +453,8 @@ impl Recorder {
 
         active.shared.stop.store(true, Ordering::Relaxed);
         // Só o tempo gravado, sem as pausas.
-        let duration_sec = active.recorded().as_secs() as i64;
+        let recorded_secs = active.recorded().as_secs_f64();
+        let duration_sec = recorded_secs as i64;
         let meeting_id = active.meeting_id.clone();
         let output_path = active.output_path.clone();
         let system_path = active.system_path.clone();
@@ -472,7 +473,7 @@ impl Recorder {
                 .map_err(|e| AppError::Audio(format!("finalize mic: {e}")))?;
         }
 
-        mix::mix_mono_wavs(&system_path, &mic_path, &output_path)?;
+        mix::mix_mono_wavs(&system_path, &mic_path, &output_path, Some(recorded_secs))?;
 
         let _ = std::fs::remove_file(&system_path);
         let _ = std::fs::remove_file(&mic_path);
@@ -631,6 +632,9 @@ fn start_cpal_mic(
 
     let shared_cb = Arc::clone(&shared);
     let err_fn = |err| eprintln!("erro mic cpal: {err}");
+    // A taxa informada no início pode mudar com o stream rodando (Teams/Meet/Zoom
+    // costumam levar o microfone para 96 kHz). Medimos a taxa real pelo relógio.
+    let mut rate = InputRateTracker::new(in_rate);
 
     let stream = match config.sample_format() {
         SampleFormat::F32 => {
@@ -639,6 +643,7 @@ fn start_cpal_mic(
                 .build_input_stream(
                     &stream_config,
                     move |data: &[f32], _| {
+                        let in_rate = rate.observe(data.len() / channels, Instant::now());
                         if shared_cb.stop.load(Ordering::Relaxed)
                             || shared_cb.paused.load(Ordering::Relaxed)
                         {
@@ -663,6 +668,7 @@ fn start_cpal_mic(
                 .build_input_stream(
                     &stream_config,
                     move |data: &[i16], _| {
+                        let in_rate = rate.observe(data.len() / channels, Instant::now());
                         if shared_cb.stop.load(Ordering::Relaxed)
                             || shared_cb.paused.load(Ordering::Relaxed)
                         {
@@ -718,6 +724,64 @@ fn write_i16_mono(
     }
 }
 
+/// Taxas de amostragem comuns em dispositivos de áudio.
+const STANDARD_RATES: [u32; 12] = [
+    8_000, 11_025, 16_000, 22_050, 24_000, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400,
+    192_000,
+];
+/// Janela para medir a taxa real (quadros recebidos ÷ tempo decorrido).
+const RATE_WINDOW: Duration = Duration::from_secs(2);
+
+/// Acompanha a taxa real de um microfone. O cpal informa a taxa só ao abrir o
+/// stream; se outro app troca a taxa do dispositivo, os quadros continuam
+/// chegando na taxa nova e, sem isso, o áudio sai esticado ou acelerado.
+struct InputRateTracker {
+    rate: u32,
+    window_start: Option<Instant>,
+    window_frames: u64,
+}
+
+impl InputRateTracker {
+    fn new(rate: u32) -> Self {
+        Self {
+            rate,
+            window_start: None,
+            window_frames: 0,
+        }
+    }
+
+    /// Registra `frames` recebidos em `now` e devolve a taxa a usar.
+    fn observe(&mut self, frames: usize, now: Instant) -> u32 {
+        let start = *self.window_start.get_or_insert(now);
+        self.window_frames += frames as u64;
+        let elapsed = now.saturating_duration_since(start);
+        if elapsed >= RATE_WINDOW {
+            let measured = self.window_frames as f64 / elapsed.as_secs_f64();
+            let nearest = STANDARD_RATES
+                .iter()
+                .copied()
+                .min_by(|a, b| {
+                    (*a as f64 - measured)
+                        .abs()
+                        .total_cmp(&(*b as f64 - measured).abs())
+                })
+                .unwrap_or(self.rate);
+            // Só troca com folga clara, para não oscilar com o jitter dos buffers.
+            let close = (measured - nearest as f64).abs() / nearest as f64 <= 0.06;
+            if close && nearest != self.rate {
+                eprintln!(
+                    "rebobina: taxa do microfone mudou de {} para {} Hz (medido {:.0})",
+                    self.rate, nearest, measured
+                );
+                self.rate = nearest;
+            }
+            self.window_start = Some(now);
+            self.window_frames = 0;
+        }
+        self.rate
+    }
+}
+
 fn downmix_and_resample_f32(
     data: &[f32],
     channels: usize,
@@ -766,6 +830,37 @@ fn pad_mic_to_system(shared: &CaptureShared) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rate_tracker_follows_device_rate_change() {
+        let start = Instant::now();
+        let mut tracker = InputRateTracker::new(48_000);
+        let mut t = start;
+        // 4 s a 48 kHz em buffers de 10 ms: continua 48 kHz.
+        for _ in 0..400 {
+            assert_eq!(tracker.observe(480, t), 48_000);
+            t += Duration::from_millis(10);
+        }
+        // O dispositivo passa a 96 kHz: depois de uma janela, adota 96 kHz.
+        let mut rate = 48_000;
+        for _ in 0..400 {
+            rate = tracker.observe(960, t);
+            t += Duration::from_millis(10);
+        }
+        assert_eq!(rate, 96_000);
+    }
+
+    #[test]
+    fn rate_tracker_ignores_jitter() {
+        let mut tracker = InputRateTracker::new(48_000);
+        let mut t = Instant::now();
+        // Buffers irregulares, mas em média 48 kHz.
+        for i in 0..600 {
+            let frames = if i % 2 == 0 { 400 } else { 560 };
+            assert_eq!(tracker.observe(frames, t), 48_000);
+            t += Duration::from_millis(10);
+        }
+    }
 
     #[test]
     fn recorded_time_skips_pauses() {

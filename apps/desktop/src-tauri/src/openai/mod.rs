@@ -132,11 +132,12 @@ pub struct MeetingContext<'a> {
     pub title: &'a str,
     pub description: Option<&'a str>,
     pub duration_min: Option<i64>,
+    /// Vocabulário das Configurações (nomes, empresas, termos).
+    pub vocabulary: &'a str,
 }
 
 #[derive(Debug, Deserialize)]
 struct WhisperVerbose {
-    text: String,
     #[serde(default)]
     segments: Vec<WhisperSegment>,
 }
@@ -146,6 +147,76 @@ struct WhisperSegment {
     start: f64,
     end: f64,
     text: String,
+    #[serde(default)]
+    no_speech_prob: f64,
+    #[serde(default)]
+    avg_logprob: f64,
+    #[serde(default)]
+    compression_ratio: f64,
+}
+
+/// Frases que o Whisper costuma inventar em trechos de silêncio ou ruído
+/// (vindas de legendas de vídeos usadas no treino).
+const HALLUCINATION_PHRASES: &[&str] = &[
+    "inscreva-se",
+    "inscreva se",
+    "assinar o canal",
+    "assine o canal",
+    "sininho",
+    "ative o sino",
+    "legendas pela comunidade",
+    "legendado por",
+    "legendas por",
+    "obrigado por assistir",
+    "amara.org",
+    "até o próximo vídeo",
+    "até a próxima!",
+];
+
+impl WhisperSegment {
+    /// Sinais do próprio Whisper de que o trecho não é fala real: provável
+    /// silêncio com baixa confiança, texto muito repetitivo ou frase típica
+    /// de alucinação.
+    fn is_likely_hallucination(&self) -> bool {
+        let silent = self.no_speech_prob > 0.6 && self.avg_logprob < -1.0;
+        let repetitive = self.compression_ratio > 2.4;
+        let lower = self.text.to_lowercase();
+        let known = HALLUCINATION_PHRASES.iter().any(|p| lower.contains(p));
+        silent || repetitive || known
+    }
+}
+
+/// Máximo de caracteres do prompt do Whisper (o limite é ~224 tokens).
+const WHISPER_PROMPT_MAX_CHARS: usize = 700;
+
+/// Texto de contexto para o Whisper acertar a grafia de nomes e termos.
+pub fn whisper_prompt(title: &str, description: Option<&str>, vocabulary: &str) -> Option<String> {
+    let mut parts = Vec::new();
+    let terms = vocabulary_terms(vocabulary);
+    if !terms.is_empty() {
+        parts.push(format!("Nomes e termos: {}.", terms.join(", ")));
+    }
+    if !title.trim().is_empty() {
+        parts.push(format!("Reunião: {}.", title.trim()));
+    }
+    if let Some(desc) = description.map(str::trim).filter(|d| !d.is_empty()) {
+        parts.push(desc.to_string());
+    }
+    let prompt = parts.join(" ");
+    if prompt.is_empty() {
+        return None;
+    }
+    Some(prompt.chars().take(WHISPER_PROMPT_MAX_CHARS).collect())
+}
+
+/// Termos do vocabulário, separados por vírgula, ponto e vírgula ou linha.
+pub fn vocabulary_terms(vocabulary: &str) -> Vec<String> {
+    vocabulary
+        .split([',', ';', '\n'])
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 #[derive(Debug, Deserialize)]
@@ -163,7 +234,12 @@ struct ChatMessage {
     content: Option<String>,
 }
 
-pub fn transcribe_file(api_key: &str, path: &Path, language: &str) -> AppResult<TranscriptionResult> {
+pub fn transcribe_file(
+    api_key: &str,
+    path: &Path,
+    language: &str,
+    prompt: Option<&str>,
+) -> AppResult<TranscriptionResult> {
     let mut file = File::open(path)?;
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)?;
@@ -186,6 +262,10 @@ pub fn transcribe_file(api_key: &str, path: &Path, language: &str) -> AppResult<
             .text("model", "whisper-1")
             .text("response_format", "verbose_json")
             .text("language", language.to_string());
+        let form = match prompt {
+            Some(p) => form.text("prompt", p.to_string()),
+            None => form,
+        };
 
         Ok(client
             .post("https://api.openai.com/v1/audio/transcriptions")
@@ -200,19 +280,21 @@ pub fn transcribe_file(api_key: &str, path: &Path, language: &str) -> AppResult<
     }
 
     let parsed: WhisperVerbose = serde_json::from_str(&body)?;
-    Ok(TranscriptionResult {
-        text: parsed.text.trim().to_string(),
-        segments: parsed
-            .segments
-            .into_iter()
-            .map(|s| TranscriptSegment {
-                start: s.start,
-                end: s.end,
-                text: s.text.trim().to_string(),
-                speaker: None,
-            })
-            .collect(),
-    })
+    let segments: Vec<TranscriptSegment> = parsed
+        .segments
+        .into_iter()
+        .filter(|s| !s.is_likely_hallucination())
+        .map(|s| TranscriptSegment {
+            start: s.start,
+            end: s.end,
+            text: s.text.trim().to_string(),
+            speaker: None,
+        })
+        .filter(|s| !s.text.is_empty())
+        .collect();
+    // Texto montado só com os trechos mantidos (o `text` do Whisper inclui os descartados).
+    let text = segments.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(" ");
+    Ok(TranscriptionResult { text, segments })
 }
 
 pub const SUMMARY_MODEL: &str = "gpt-4o";
@@ -249,6 +331,13 @@ pub fn summarize_transcript(
     let mut user = format!("Nome atual da reunião: {}\n", context.title);
     if let Some(min) = context.duration_min {
         user.push_str(&format!("Duração: cerca de {min} minutos\n"));
+    }
+    let terms = vocabulary_terms(context.vocabulary);
+    if !terms.is_empty() {
+        user.push_str(&format!(
+            "Grafia correta de nomes e termos (a transcrição pode ter errado, corrija no resumo): {}\n",
+            terms.join(", ")
+        ));
     }
     if let Some(desc) = context.description.filter(|d| !d.trim().is_empty()) {
         user.push_str(&format!("Descrição escrita por quem gravou: {}\n", desc.trim()));
@@ -370,4 +459,47 @@ fn to_markdown(summary: &StructuredSummary) -> String {
         list(&mut md, "Próximos passos", &summary.next_steps, "nenhum");
     }
     md
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn seg(text: &str, no_speech: f64, logprob: f64, compression: f64) -> WhisperSegment {
+        WhisperSegment {
+            start: 0.0,
+            end: 1.0,
+            text: text.into(),
+            no_speech_prob: no_speech,
+            avg_logprob: logprob,
+            compression_ratio: compression,
+        }
+    }
+
+    #[test]
+    fn flags_likely_hallucinations() {
+        assert!(!seg("Eu comecei como DevOps na GetNet.", 0.01, -0.3, 1.4).is_likely_hallucination());
+        assert!(seg("Tchau!", 0.9, -1.4, 0.8).is_likely_hallucination());
+        assert!(seg("Não esquece de assinar o canal e clicar no sininho.", 0.1, -0.4, 1.3)
+            .is_likely_hallucination());
+        assert!(seg("e aí e aí e aí e aí e aí e aí", 0.2, -0.5, 3.1).is_likely_hallucination());
+        // Fala real com confiança baixa, mas sem sinal de silêncio, fica.
+        assert!(!seg("O Prometheus e o Grafana.", 0.2, -1.2, 1.5).is_likely_hallucination());
+    }
+
+    #[test]
+    fn builds_whisper_prompt_from_vocabulary() {
+        assert_eq!(
+            vocabulary_terms("Kavagy, Vivan\nGetNet; Argo CD ,\n"),
+            ["Kavagy", "Vivan", "GetNet", "Argo CD"]
+        );
+        let prompt = whisper_prompt("Entrevista DevOps", Some("Vaga na Kavagy"), "Kavagy, Vivan").unwrap();
+        assert_eq!(
+            prompt,
+            "Nomes e termos: Kavagy, Vivan. Reunião: Entrevista DevOps. Vaga na Kavagy"
+        );
+        assert_eq!(whisper_prompt("", None, ""), None);
+        let long = "x, ".repeat(1000);
+        assert!(whisper_prompt("", None, &long).unwrap().chars().count() <= WHISPER_PROMPT_MAX_CHARS);
+    }
 }

@@ -118,6 +118,10 @@ pub struct AppSettings {
     pub language: String,
     #[serde(default = "default_true")]
     pub auto_detect_calls: bool,
+    /// Nomes, empresas e termos que costumam aparecer nas reuniões, um por
+    /// linha ou separados por vírgula. Orientam a transcrição e o resumo.
+    #[serde(default)]
+    pub vocabulary: String,
 }
 
 fn default_true() -> bool {
@@ -440,10 +444,19 @@ impl Storage {
             .optional()?
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(true);
+        let vocabulary: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'vocabulary'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or_default();
         Ok(AppSettings {
             default_device_name,
             language,
             auto_detect_calls,
+            vocabulary,
         })
     }
 
@@ -462,6 +475,11 @@ impl Storage {
             } else {
                 "0"
             }],
+        )?;
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('vocabulary', ?1)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![settings.vocabulary.trim()],
         )?;
         match &settings.default_device_name {
             Some(name) => {

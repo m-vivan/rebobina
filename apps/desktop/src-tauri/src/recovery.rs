@@ -69,7 +69,7 @@ fn recover_dir(dir: &Path) -> AppResult<Option<(std::path::PathBuf, i64)>> {
     let has_mic = repair_wav_header(&mic)?.unwrap_or(0) > 0;
 
     if has_system || has_mic {
-        mix_mono_wavs(&system, &mic, &output)?;
+        mix_mono_wavs(&system, &mic, &output, None)?;
         let _ = fs::remove_file(&system);
         let _ = fs::remove_file(&mic);
     } else if !output.exists() {
