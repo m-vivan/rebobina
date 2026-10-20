@@ -12,6 +12,9 @@ const WINDOW_MS: u32 = 100;
 pub const SPEAKER_ME: &str = "me";
 pub const SPEAKER_OTHERS: &str = "others";
 
+/// Nível médio (0–255) abaixo do qual um trecho é considerado silêncio.
+const SILENCE_LEVEL: f64 = 3.0;
+
 /// Volume (RMS, 0–255) de cada faixa em janelas de `window_ms`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -67,6 +70,23 @@ impl SpeakerLevels {
         } else {
             Some(SPEAKER_OTHERS)
         }
+    }
+
+    /// As duas faixas praticamente mudas entre `start` e `end` (média do nível
+    /// mais alto abaixo de `SILENCE_LEVEL`). Fala real fica bem acima disso.
+    pub fn is_silent_between(&self, start: f64, end: f64) -> bool {
+        let per_sec = 1000.0 / self.window_ms.max(1) as f64;
+        let from = (start.max(0.0) * per_sec).floor() as usize;
+        let to = ((end.max(start) * per_sec).ceil() as usize).max(from + 1);
+        let n = to - from;
+        let loudest: u32 = (from..to)
+            .map(|i| {
+                let m = self.mic.get(i).copied().unwrap_or(0);
+                let s = self.system.get(i).copied().unwrap_or(0);
+                m.max(s) as u32
+            })
+            .sum();
+        (loudest as f64 / n as f64) < SILENCE_LEVEL
     }
 
     pub fn label_segments(&self, segments: &mut [TranscriptSegment]) {

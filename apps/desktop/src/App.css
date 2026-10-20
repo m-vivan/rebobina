@@ -1127,3 +1127,9 @@ code {
   background: var(--warn);
   animation: none;
 }
+
+.field-hint {
+  font-size: 0.8rem;
+  color: var(--muted);
+  line-height: 1.4;
+}

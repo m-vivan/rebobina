@@ -60,6 +60,8 @@ export interface AppSettings {
   defaultDeviceName: string | null;
   language: string;
   autoDetectCalls: boolean;
+  /** Nomes, empresas e termos que orientam a transcrição e o resumo. */
+  vocabulary?: string;
 }
 
 export interface DetectedCall {

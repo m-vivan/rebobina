@@ -11,6 +11,7 @@ export function Settings() {
     useAudioDevices(2500);
   const [language, setLanguage] = useState("pt");
   const [autoDetectCalls, setAutoDetectCalls] = useState(true);
+  const [vocabulary, setVocabulary] = useState("");
   const [dataDir, setDataDir] = useState("");
   const [screen, setScreen] = useState<ScreenPermissionStatus | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -29,6 +30,7 @@ export function Settings() {
         setHasKey(key);
         setLanguage(settings.language || "pt");
         setAutoDetectCalls(settings.autoDetectCalls !== false);
+        setVocabulary(settings.vocabulary ?? "");
         if (settings.defaultDeviceName) {
           setDeviceName(settings.defaultDeviceName);
         }
@@ -54,6 +56,7 @@ export function Settings() {
         defaultDeviceName: deviceName || null,
         language,
         autoDetectCalls,
+        vocabulary,
       });
       setMessage("Configurações salvas.");
     } catch (err) {
@@ -230,6 +233,23 @@ export function Settings() {
               <option value="en">English (en)</option>
               <option value="es">Español (es)</option>
             </select>
+          </label>
+          <label>
+            <span>
+              Vocabulário <span className="optional">(opcional)</span>
+            </span>
+            <textarea
+              id="vocabulary"
+              rows={4}
+              value={vocabulary}
+              onChange={(e) => setVocabulary(e.target.value)}
+              placeholder="Kavagy, Vivan, GetNet, Argo CD, SonarQube, Zabbix"
+            />
+            <span className="field-hint">
+              Nomes de pessoas, empresas e termos técnicos que aparecem nas suas
+              reuniões, separados por vírgula ou um por linha. Ajudam a
+              transcrição a escrever certo e o resumo a corrigir o que saiu errado.
+            </span>
           </label>
           <label>
             Microfone padrão

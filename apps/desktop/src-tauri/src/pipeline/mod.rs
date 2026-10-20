@@ -30,20 +30,28 @@ pub fn process_meeting(storage: &Storage, meeting_id: &str) -> AppResult<()> {
 
     let settings = storage.get_settings()?;
     let language = settings.language;
+    let prompt = openai::whisper_prompt(
+        &meeting.title,
+        meeting.description.as_deref(),
+        &settings.vocabulary,
+    );
 
     storage.set_status(meeting_id, "processing", None)?;
 
-    let mut transcription = match transcribe_with_chunking(&api_key, &audio_path, &language) {
-        Ok(t) => t,
-        Err(e) => {
-            storage.set_status(meeting_id, "error", Some(&e.to_string()))?;
-            return Err(e);
-        }
-    };
+    let mut transcription =
+        match transcribe_with_chunking(&api_key, &audio_path, &language, prompt.as_deref()) {
+            Ok(t) => t,
+            Err(e) => {
+                storage.set_status(meeting_id, "error", Some(&e.to_string()))?;
+                return Err(e);
+            }
+        };
 
-    if let Some(levels) = SpeakerLevels::load_for(&audio_path) {
+    let levels = SpeakerLevels::load_for(&audio_path);
+    if let Some(levels) = &levels {
         levels.label_segments(&mut transcription.segments);
     }
+    clean_segments(&mut transcription, levels.as_ref());
 
     let segments_json = serde_json::to_string(&transcription.segments)?;
     storage.save_transcript(meeting_id, &transcription.text, &segments_json)?;
@@ -88,10 +96,12 @@ fn summarize_and_save(storage: &Storage, api_key: &str, meeting_id: &str) -> App
     let segments: Vec<TranscriptSegment> =
         serde_json::from_str(&transcript.segments_json).unwrap_or_default();
     let text = transcript_for_summary(&segments, &transcript.full_text);
+    let settings = storage.get_settings()?;
     let context = MeetingContext {
         title: &meeting.title,
         description: meeting.description.as_deref(),
         duration_min: meeting.duration_sec.map(|s| (s + 59) / 60),
+        vocabulary: &settings.vocabulary,
     };
 
     match openai::summarize_transcript(api_key, &text, &context) {
@@ -123,6 +133,33 @@ fn summarize_and_save(storage: &Storage, api_key: &str, meeting_id: &str) -> App
             Err(e)
         }
     }
+}
+
+/// Quantas vezes seguidas o mesmo texto pode aparecer antes de ser cortado.
+const MAX_REPEATS: usize = 2;
+
+/// Tira da transcrição o que provavelmente não é fala: trechos em que as duas
+/// faixas estavam em silêncio (onde o Whisper costuma inventar texto) e longas
+/// sequências do mesmo texto ("Tchau!" × 40). Remonta o texto completo.
+fn clean_segments(transcription: &mut TranscriptionResult, levels: Option<&SpeakerLevels>) {
+    let mut kept: Vec<TranscriptSegment> = Vec::with_capacity(transcription.segments.len());
+    let mut run = 0usize;
+    for seg in transcription.segments.drain(..) {
+        if levels.is_some_and(|l| l.is_silent_between(seg.start, seg.end)) {
+            continue;
+        }
+        let normalized = seg.text.trim().to_lowercase();
+        let repeat = kept
+            .last()
+            .is_some_and(|last| last.text.trim().to_lowercase() == normalized);
+        run = if repeat { run + 1 } else { 1 };
+        if run > MAX_REPEATS {
+            continue;
+        }
+        kept.push(seg);
+    }
+    transcription.text = kept.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(" ");
+    transcription.segments = kept;
 }
 
 /// Título gerado automaticamente ao começar sem nome ("Reunião 2026-10-19 20:04").
@@ -166,6 +203,7 @@ fn transcribe_with_chunking(
     api_key: &str,
     path: &Path,
     language: &str,
+    prompt: Option<&str>,
 ) -> AppResult<TranscriptionResult> {
     let chunk_dir = path
         .parent()
@@ -180,7 +218,7 @@ fn transcribe_with_chunking(
         let mut offset = 0.0f64;
 
         for chunk_path in &chunks {
-            let result = openai::transcribe_file(api_key, chunk_path, language)?;
+            let result = openai::transcribe_file(api_key, chunk_path, language, prompt)?;
             texts.push(result.text);
             for seg in result.segments {
                 all_segments.push(TranscriptSegment {
@@ -444,6 +482,41 @@ mod tests {
         }
         assert!((total - 3.0).abs() < 0.01, "duração total {total}");
         let _ = fs::remove_dir_all(dir);
+    }
+
+    fn seg(start: f64, text: &str) -> TranscriptSegment {
+        TranscriptSegment { start, end: start + 1.0, text: text.into(), speaker: None }
+    }
+
+    #[test]
+    fn cleans_silence_and_repeated_segments() {
+        // 0–2 s com fala na chamada; 2–6 s silêncio.
+        let mut system = vec![0.3f32; 2_000];
+        system.extend(vec![0.0f32; 4_000]);
+        let levels = SpeakerLevels::from_tracks(&vec![0.0; 6_000], 1_000, &system, 1_000);
+
+        let mut t = TranscriptionResult {
+            text: String::new(),
+            segments: vec![
+                seg(0.0, "Bom dia, pessoal."),
+                seg(1.0, "Tchau!"),
+                seg(2.0, "Tchau!"),
+                seg(3.0, "Tchau!"),
+                seg(4.0, "Tchau!"),
+            ],
+        };
+        clean_segments(&mut t, Some(&levels));
+        let texts: Vec<_> = t.segments.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(texts, ["Bom dia, pessoal.", "Tchau!"]);
+        assert_eq!(t.text, "Bom dia, pessoal. Tchau!");
+
+        // Sem níveis: só corta a repetição longa.
+        let mut t = TranscriptionResult {
+            text: String::new(),
+            segments: (0..5).map(|i| seg(i as f64, "e aí")).collect(),
+        };
+        clean_segments(&mut t, None);
+        assert_eq!(t.segments.len(), MAX_REPEATS);
     }
 
     #[test]
