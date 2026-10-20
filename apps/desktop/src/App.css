@@ -1059,3 +1059,71 @@ code {
     transition: none;
   }
 }
+
+/* Gravação pausada */
+.eyebrow.paused {
+  color: var(--warn);
+}
+
+.timer.is-paused {
+  animation: timer-blink 1.4s steps(2, jump-none) infinite;
+}
+
+@keyframes timer-blink {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .timer.is-paused {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+.deck-buttons {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.btn.pause::before,
+.btn.resume::before {
+  content: "";
+  display: inline-block;
+  margin-right: 8px;
+}
+
+.btn.pause::before {
+  width: 3px;
+  height: 11px;
+  border-left: 3px solid currentColor;
+  border-right: 3px solid currentColor;
+}
+
+.btn.resume::before {
+  width: 0;
+  height: 0;
+  border-top: 6px solid transparent;
+  border-bottom: 6px solid transparent;
+  border-left: 10px solid currentColor;
+}
+
+.status-saved {
+  color: #6b5d4c;
+}
+
+.recording-banner.is-paused {
+  background: color-mix(in srgb, var(--warn) 12%, var(--bg1));
+  border-bottom-color: color-mix(in srgb, var(--warn) 40%, transparent);
+}
+
+.recording-banner.is-paused .recording-banner-dot {
+  background: var(--warn);
+  animation: none;
+}

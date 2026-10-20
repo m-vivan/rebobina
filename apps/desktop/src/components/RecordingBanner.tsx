@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
-import type { Meeting } from "../types";
+import type { Meeting, RecordingStatus } from "../types";
 import { formatDuration } from "../utils";
 
 /**
@@ -12,45 +12,52 @@ export function RecordingBanner() {
   const location = useLocation();
   const navigate = useNavigate();
   const [meeting, setMeeting] = useState<Meeting | null>(null);
-  const [now, setNow] = useState(Date.now());
+  const [status, setStatus] = useState<RecordingStatus | null>(null);
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
+    let currentId: string | null = null;
     async function check() {
       try {
-        const id = await api.getRecordingState();
+        const next = await api.getRecordingStatus();
         if (!alive) return;
-        if (!id) {
+        setStatus(next);
+        if (!next) {
+          currentId = null;
           setMeeting(null);
           return;
         }
-        setMeeting((prev) => (prev?.id === id ? prev : null));
-        const m = await api.getMeeting(id);
-        if (alive) setMeeting(m);
+        if (next.meetingId !== currentId) {
+          currentId = next.meetingId;
+          const m = await api.getMeeting(next.meetingId);
+          if (alive) setMeeting(m);
+        }
       } catch {
         // Fora do Tauri (ex.: preview no navegador) não há gravação para mostrar.
       }
     }
     void check();
-    const poll = setInterval(check, 2000);
-    const tick = setInterval(() => setNow(Date.now()), 1000);
+    const poll = setInterval(check, 1000);
     return () => {
       alive = false;
       clearInterval(poll);
-      clearInterval(tick);
     };
   }, [location.pathname]);
 
-  if (!meeting || location.pathname === `/recording/${meeting.id}`) {
+  if (!meeting || !status || location.pathname === `/recording/${meeting.id}`) {
     return null;
   }
 
-  const elapsed = Math.max(
-    0,
-    Math.floor((now - new Date(meeting.startedAt).getTime()) / 1000),
-  );
+  async function onTogglePause() {
+    setError(null);
+    try {
+      setStatus(status?.paused ? await api.resumeRecording() : await api.pauseRecording());
+    } catch (e) {
+      setError(String(e));
+    }
+  }
 
   async function onStop() {
     setStopping(true);
@@ -67,11 +74,11 @@ export function RecordingBanner() {
   }
 
   return (
-    <div className="recording-banner" role="status">
+    <div className={`recording-banner ${status.paused ? "is-paused" : ""}`} role="status">
       <span className="recording-banner-dot" aria-hidden />
       <span className="recording-banner-text">
-        Gravando <strong>{meeting.title}</strong>
-        <span className="recording-banner-time">{formatDuration(elapsed)}</span>
+        {status.paused ? "Pausada" : "Gravando"} <strong>{meeting.title}</strong>
+        <span className="recording-banner-time">{formatDuration(status.elapsedSec)}</span>
       </span>
       {error && <span className="error">{error}</span>}
       <div className="row gap">
@@ -81,6 +88,9 @@ export function RecordingBanner() {
           onClick={() => navigate(`/recording/${meeting.id}`)}
         >
           Abrir
+        </button>
+        <button className="btn ghost" type="button" onClick={onTogglePause}>
+          {status.paused ? "Retomar" : "Pausar"}
         </button>
         <button
           className="btn danger"

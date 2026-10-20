@@ -1,4 +1,12 @@
-export type MeetingStatus = "recording" | "processing" | "ready" | "error";
+/** "saved": gravação parada sem transcrever ("Parar"); falta rebobinar. */
+export type MeetingStatus = "recording" | "saved" | "processing" | "ready" | "error";
+
+export interface RecordingStatus {
+  meetingId: string;
+  paused: boolean;
+  /** Segundos gravados, sem contar as pausas. */
+  elapsedSec: number;
+}
 
 export interface Meeting {
   id: string;

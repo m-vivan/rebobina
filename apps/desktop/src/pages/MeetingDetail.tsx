@@ -304,6 +304,17 @@ export function MeetingDetail() {
         </div>
 
         <div className="row gap header-actions">
+          {meeting.status === "saved" && (
+            <button
+              className="btn primary"
+              type="button"
+              onClick={onRetry}
+              disabled={retrying}
+              title="Transcreve e resume a gravação"
+            >
+              {retrying ? "Enviando…" : "Rebobinar"}
+            </button>
+          )}
           {(meeting.status === "error" || busy) && (
             <button
               className="btn"
@@ -370,6 +381,12 @@ export function MeetingDetail() {
         <div className="banner">
           Rebobinando: transcrevendo e resumindo com a OpenAI. Isso pode levar
           alguns minutos.
+        </div>
+      )}
+      {meeting.status === "saved" && (
+        <div className="banner">
+          Gravação salva. Quando quiser, clique em <strong>Rebobinar</strong> para
+          transcrever e resumir.
         </div>
       )}
       {meeting.errorMessage && <div className="banner warn">{meeting.errorMessage}</div>}
