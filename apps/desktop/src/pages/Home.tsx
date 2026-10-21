@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState, type FormEvent, type MouseEvent } fro
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { BrandMark } from "../components/BrandMark";
-import { useAudioDevices } from "../hooks/useAudioDevices";
-import type { Meeting } from "../types";
+import { FOLLOW_SYSTEM, useAudioDevices } from "../hooks/useAudioDevices";
+import type { Meeting, MicHints } from "../types";
 import { formatDate, formatDuration, statusLabel } from "../utils";
 
 export function Home() {
@@ -13,6 +13,29 @@ export function Home() {
   const [title, setTitle] = useState("");
   const { devices, deviceName, setDeviceName, refreshDevices } =
     useAudioDevices(2000);
+  const [hints, setHints] = useState<MicHints | null>(null);
+
+  // Microfone padrão do macOS e o que outro app (a chamada) está usando.
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      api
+        .getMicHints()
+        .then((h) => alive && setHints(h))
+        .catch(() => undefined);
+    void load();
+    const timer = setInterval(load, 3000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, []);
+
+  const selectedMic = deviceName || hints?.systemDefault || null;
+  const callMic =
+    hints?.inUseByOtherApp && hints.inUseByOtherApp !== selectedMic
+      ? hints.inUseByOtherApp
+      : null;
   const [hasKey, setHasKey] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -147,14 +170,27 @@ export function Home() {
                 void refreshDevices();
               }}
             >
-              {devices.map((d) => (
-                <option key={d.name} value={d.name}>
-                  {d.name}
-                  {d.isDefault ? " (padrão)" : ""}
-                </option>
-              ))}
+              <option value={FOLLOW_SYSTEM}>
+                Seguir o sistema{hints?.systemDefault ? ` (agora: ${hints.systemDefault})` : ""}
+              </option>
+              {devices
+                .filter((d) => !d.likelyLoopback)
+                .map((d) => (
+                  <option key={d.name} value={d.name}>
+                    {d.name}
+                  </option>
+                ))}
             </select>
           </label>
+          {callMic && (
+            <p className="mic-hint">
+              Outro app está usando <strong>{callMic}</strong>. Se é a sua chamada,
+              grave com ele.{" "}
+              <button className="link-button" type="button" onClick={() => setDeviceName(callMic)}>
+                Usar este
+              </button>
+            </p>
+          )}
         </form>
         <p className="record-note">
           Grava a sua voz e o som da chamada. Nenhuma imagem da tela é salva.
