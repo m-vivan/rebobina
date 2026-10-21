@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
+import { UpdateSection } from "../components/UpdateSection";
 import { useAudioDevices } from "../hooks/useAudioDevices";
 import type { ScreenPermissionStatus } from "../types";
 
@@ -289,6 +290,8 @@ export function Settings() {
         {message && <p className="ok">{message}</p>}
         {error && <p className="error">{error}</p>}
       </section>
+
+      <UpdateSection />
 
       <section className="panel">
         <h2>Como funciona</h2>

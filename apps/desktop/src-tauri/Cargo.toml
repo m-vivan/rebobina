@@ -29,6 +29,8 @@ thiserror = "2"
 parking_lot = "0.12"
 dirs = "6"
 tauri-plugin-notification = "2.7.0"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 [profile.release]
 codegen-units = 1

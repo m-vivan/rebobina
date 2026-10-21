@@ -1,6 +1,7 @@
 import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
 import { CallDetectPrompt } from "./components/CallDetectPrompt";
 import { RecordingBanner } from "./components/RecordingBanner";
+import { UpdateBanner } from "./components/UpdateBanner";
 import { ScreenPermissionSetup } from "./components/ScreenPermissionSetup";
 import { Home } from "./pages/Home";
 import { MeetingDetail } from "./pages/MeetingDetail";
@@ -15,6 +16,7 @@ function App() {
         <ScreenPermissionSetup />
         <CallDetectPrompt />
         <RecordingBanner />
+        <UpdateBanner />
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/recording/:id" element={<Recording />} />
