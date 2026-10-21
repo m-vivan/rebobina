@@ -5,19 +5,25 @@ import type { AudioDeviceInfo } from "../types";
 /** Valor do seletor que significa "seguir o microfone padrão do macOS". */
 export const FOLLOW_SYSTEM = "";
 
-function pickPreferred(
-  devices: AudioDeviceInfo[],
-  current: string,
-  savedDefault?: string | null,
-): string {
-  // Um microfone escolhido que continua conectado é mantido.
-  if (current && devices.some((d) => d.name === current)) {
-    return current;
-  }
+/**
+ * Escolha inicial: o microfone padrão salvo nas Configurações, se estiver
+ * conectado; senão, seguir o sistema.
+ */
+function initialChoice(devices: AudioDeviceInfo[], savedDefault?: string | null): string {
   if (savedDefault && devices.some((d) => d.name === savedDefault)) {
     return savedDefault;
   }
-  // Sem escolha (ou o escolhido foi desconectado): segue o sistema.
+  return FOLLOW_SYSTEM;
+}
+
+/**
+ * Nas atualizações seguintes, mantém a escolha da pessoa (inclusive "seguir o
+ * sistema"); só muda se o microfone escolhido for desconectado.
+ */
+function keepChoice(devices: AudioDeviceInfo[], current: string): string {
+  if (current === FOLLOW_SYSTEM || devices.some((d) => d.name === current)) {
+    return current;
+  }
   return FOLLOW_SYSTEM;
 }
 
@@ -27,6 +33,8 @@ export function useAudioDevices(pollMs = 2000) {
   const [deviceName, setDeviceName] = useState("");
   const savedDefault = useRef<string | null>(null);
   const refreshing = useRef(false);
+  // A escolha inicial só é aplicada uma vez; depois vale o que a pessoa escolheu.
+  const initialized = useRef(false);
 
   const refreshDevices = useCallback(async () => {
     if (refreshing.current) return;
@@ -34,9 +42,12 @@ export function useAudioDevices(pollMs = 2000) {
     try {
       const list = await api.listAudioDevices();
       setDevices(list);
-      setDeviceName((prev) =>
-        pickPreferred(list, prev, savedDefault.current),
-      );
+      if (!initialized.current) {
+        initialized.current = true;
+        setDeviceName(initialChoice(list, savedDefault.current));
+      } else {
+        setDeviceName((prev) => keepChoice(list, prev));
+      }
     } catch {
       // silencioso no poll; erros de start ainda aparecem na UI
     } finally {
