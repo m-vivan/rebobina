@@ -155,6 +155,30 @@ O build usa **Hardened Runtime** (exigido pela notarização) com
 `com.apple.security.device.audio-input`: sem isso o macOS entrega silêncio no
 microfone de um app com Hardened Runtime, sem mostrar o pedido de acesso.
 
+### Atualização automática (dentro do app)
+
+O app procura versões novas no `latest.json` da última release e mostra
+"Nova versão do Rebobina" no topo. O botão **Atualizar e reiniciar** baixa
+e instala a versão nova pelo próprio app; esse download não recebe a marca
+de quarentena do macOS, então não aparece o "Abrir Mesmo Assim".
+
+Cada atualização é assinada com uma chave própria (diferente do certificado
+Apple). Para configurar uma vez:
+
+```bash
+scripts/configurar-atualizador.sh
+```
+
+O script gera o par de chaves em `~/.tauri/rebobina-updater.key`, cadastra
+`TAURI_SIGNING_PRIVATE_KEY` e `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` e grava a
+chave **pública** em `plugins.updater.pubkey` do `tauri.conf.json` (faça
+commit dela). **Guarde a chave privada e a senha:** sem elas não dá para
+publicar atualizações que as versões instaladas aceitem.
+
+No CI, com a chave presente, o build usa `src-tauri/tauri.updater.conf.json`
+para gerar o `.app.tar.gz`, a assinatura `.sig` e o `latest.json`. Builds
+locais continuam sem exigir a chave.
+
 ## Licença
 
 Ao contribuir, você concorda que suas contribuições serão licenciadas sob a [MIT License](LICENSE) do projeto (Copyright Marivaldo Vivan).

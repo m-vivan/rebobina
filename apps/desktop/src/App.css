@@ -1159,3 +1159,20 @@ code {
   background: color-mix(in srgb, var(--sky) 12%, transparent);
   font-size: 0.9rem;
 }
+
+/* Aviso de versão nova */
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px max(24px, env(safe-area-inset-right, 0px)) 8px max(24px, env(safe-area-inset-left, 0px));
+  background: color-mix(in srgb, var(--sky) 14%, var(--bg1));
+  border-bottom: 1px solid color-mix(in srgb, var(--sky) 40%, transparent);
+  font-size: 0.9rem;
+}
+
+.update-banner-text {
+  flex: 1;
+  min-width: 0;
+}

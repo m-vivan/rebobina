@@ -76,6 +76,30 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      # Atualizador do app: com a chave de atualização nos secrets, gera os
+      # arquivos assinados (.app.tar.gz + .sig) e o latest.json que o app consulta.
+      # Sem a chave, o build segue igual, só sem atualização automática.
+      - name: Configure updater
+        id: updater
+        working-directory: ${{ github.workspace }}
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            {
+              echo "TAURI_SIGNING_PRIVATE_KEY<<__KEY__"
+              echo "$TAURI_SIGNING_PRIVATE_KEY"
+              echo "__KEY__"
+              echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}"
+            } >> "$GITHUB_ENV"
+            echo "args=--config src-tauri/tauri.updater.conf.json" >> "$GITHUB_OUTPUT"
+            echo "Chave de atualização presente — gerando artefatos do atualizador."
+          else
+            echo "args=" >> "$GITHUB_OUTPUT"
+            echo "Sem TAURI_SIGNING_PRIVATE_KEY — release sem atualização automática."
+          fi
+
       - name: Detect Apple signing secrets
         id: signing
         working-directory: ${{ github.workspace }}
@@ -135,7 +159,7 @@ jobs:
             - Autorize **Gravação de tela**, **Microfone** e **Notificações**
           releaseDraft: false
           prerelease: false
-          args: --target universal-apple-darwin
+          args: --target universal-apple-darwin ${{ steps.updater.outputs.args }}
 
       # Notarização é opcional (exige Developer ID pago). Como no APPLE_CERTIFICATE,
       # só exporta as variáveis que existem: o Tauri trata variável vazia como
@@ -192,4 +216,4 @@ jobs:
             ${{ steps.notary.outputs.notarized == 'yes' && '- Notarizado pela Apple' || '- **Não notarizado:** na 1ª abertura, vá em Ajustes → Privacidade e Segurança → **Abrir Mesmo Assim**' }}
           releaseDraft: false
           prerelease: false
-          args: --target universal-apple-darwin
+          args: --target universal-apple-darwin ${{ steps.updater.outputs.args }}
