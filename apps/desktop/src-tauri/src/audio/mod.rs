@@ -181,13 +181,8 @@ impl Recorder {
                 .map(|c| c.channels())
                 .unwrap_or(1);
             let is_default = default_name.as_ref() == Some(&name);
-            let likely_loopback = {
-                let lower = name.to_lowercase();
-                lower.contains("blackhole")
-                    || lower.contains("aggregate")
-                    || lower.contains("agregado")
-                    || channels >= 3
-            };
+            // Dispositivos virtuais (Teams Audio, BlackHole, agregados) não são microfones.
+            let likely_loopback = devices::is_virtual_input(&name) || channels >= 3;
             devices.push(AudioDeviceInfo {
                 name,
                 is_default,

@@ -265,7 +265,7 @@ export function Settings() {
               }}
             >
               <option value="">Seguir o sistema</option>
-              {devices.map((d) => (
+              {devices.filter((d) => !d.likelyLoopback).map((d) => (
                 <option key={d.name} value={d.name}>
                   {d.name}
                 </option>

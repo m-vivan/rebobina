@@ -233,6 +233,16 @@ mod tests {
     }
 
     #[test]
+    fn recognizes_virtual_inputs() {
+        for name in ["Microsoft Teams Audio", "BlackHole 2ch", "ZoomAudioDevice", "Dispositivo Agregado"] {
+            assert!(is_virtual_input(name), "{name}");
+        }
+        for name in ["AirPods Pro de Vivan", "Microfone (MacBook Pro)", "Brio 500"] {
+            assert!(!is_virtual_input(name), "{name}");
+        }
+    }
+
+    #[test]
     fn prefers_default_when_several_are_in_use() {
         let devices = [
             dev("Brio 500", false, true),
