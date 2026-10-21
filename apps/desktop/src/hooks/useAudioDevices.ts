@@ -2,24 +2,23 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { AudioDeviceInfo } from "../types";
 
+/** Valor do seletor que significa "seguir o microfone padrão do macOS". */
+export const FOLLOW_SYSTEM = "";
+
 function pickPreferred(
   devices: AudioDeviceInfo[],
   current: string,
   savedDefault?: string | null,
 ): string {
+  // Um microfone escolhido que continua conectado é mantido.
   if (current && devices.some((d) => d.name === current)) {
     return current;
   }
   if (savedDefault && devices.some((d) => d.name === savedDefault)) {
     return savedDefault;
   }
-  return (
-    devices.find((d) => d.isDefault && !d.likelyLoopback)?.name ||
-    devices.find((d) => !d.likelyLoopback)?.name ||
-    devices.find((d) => d.isDefault)?.name ||
-    devices[0]?.name ||
-    ""
-  );
+  // Sem escolha (ou o escolhido foi desconectado): segue o sistema.
+  return FOLLOW_SYSTEM;
 }
 
 /** Lista de microfones que atualiza ao focar o select e a cada poucos segundos. */

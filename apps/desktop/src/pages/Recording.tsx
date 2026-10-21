@@ -1,11 +1,11 @@
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { CassetteAnimation } from "../components/CassetteAnimation";
 import { SPEECH_THRESHOLD, SpeechMeter } from "../components/SpeechMeter";
-import { useAudioDevices } from "../hooks/useAudioDevices";
-import type { Meeting } from "../types";
+import { FOLLOW_SYSTEM, useAudioDevices } from "../hooks/useAudioDevices";
+import type { Meeting, MicSwitched } from "../types";
 import { formatDuration } from "../utils";
 
 export function Recording() {
@@ -26,6 +26,9 @@ export function Recording() {
   // Microfone em uso na gravação (separado da escolha automática do hook).
   const [activeMic, setActiveMic] = useState<string>("");
   const [switchingMic, setSwitchingMic] = useState(false);
+  // Microfone que está gravando de fato (vem do backend).
+  const [currentMic, setCurrentMic] = useState<string | null>(null);
+  const [micNotice, setMicNotice] = useState<MicSwitched | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -33,9 +36,28 @@ export function Recording() {
       .getMeeting(id)
       .then((m) => {
         setMeeting(m);
-        setActiveMic((prev) => prev || m?.deviceName || "");
+        setActiveMic((prev) => prev || m?.deviceName || FOLLOW_SYSTEM);
       })
       .catch((e) => setError(String(e)));
+  }, [id]);
+
+  const switchingRef = useRef(false);
+
+  // O app trocou de microfone sozinho (padrão do macOS mudou ou voz em outro mic).
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen<MicSwitched>("mic-switched", (event) => {
+      if (!id || event.payload.meetingId !== id) return;
+      setMicNotice(event.payload);
+      setCurrentMic(event.payload.to);
+      setActiveMic(event.payload.reason === "system" ? FOLLOW_SYSTEM : event.payload.to);
+      setLastHeardAt(Date.now());
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
   }, [id]);
 
   // Tempo e pausa vêm do backend, que desconta o tempo pausado.
@@ -47,6 +69,10 @@ export function Recording() {
         if (!alive || !status || status.meetingId !== id) return;
         setElapsed(status.elapsedSec);
         setPaused(status.paused);
+        setCurrentMic(status.micName);
+        if (!switchingRef.current) {
+          setActiveMic(status.followSystem ? FOLLOW_SYSTEM : (status.micName ?? FOLLOW_SYSTEM));
+        }
       } catch {
         // Fora do Tauri não há gravação para acompanhar.
       }
@@ -86,7 +112,9 @@ export function Recording() {
     const previous = activeMic;
     setActiveMic(name);
     setSwitchingMic(true);
+    switchingRef.current = true;
     setError(null);
+    setMicNotice(null);
     try {
       await api.switchMicrophone(name || null);
     } catch (e) {
@@ -94,6 +122,7 @@ export function Recording() {
       setError(String(e));
     } finally {
       setSwitchingMic(false);
+      switchingRef.current = false;
     }
   }
 
@@ -174,6 +203,38 @@ export function Recording() {
           </p>
         </div>
 
+        {micNotice && (
+          <p className="mic-notice" role="status">
+            <span>
+              {micNotice.reason === "voice" ? (
+                <>
+                  Sua voz estava chegando em <strong>{micNotice.to}</strong>, não no
+                  microfone gravado. Trocamos para ele.
+                </>
+              ) : (
+                <>
+                  O microfone do sistema mudou. Agora gravando de{" "}
+                  <strong>{micNotice.to}</strong>.
+                </>
+              )}
+            </span>
+            <span className="row gap">
+              {micNotice.reason === "voice" && (
+                <button
+                  className="btn small"
+                  type="button"
+                  onClick={() => void onSwitchMic(micNotice.from ?? FOLLOW_SYSTEM)}
+                >
+                  Desfazer
+                </button>
+              )}
+              <button className="btn ghost small" type="button" onClick={() => setMicNotice(null)}>
+                Ok
+              </button>
+            </span>
+          </p>
+        )}
+
         <div className="deck-controls">
           <label className="mic-picker">
             <span>Microfone</span>
@@ -184,7 +245,10 @@ export function Recording() {
               onChange={(e) => void onSwitchMic(e.target.value)}
               onFocus={() => void refreshDevices()}
             >
-              <option value="">Padrão do sistema</option>
+              <option value={FOLLOW_SYSTEM}>
+                Seguir o sistema
+                {activeMic === FOLLOW_SYSTEM && currentMic ? ` (agora: ${currentMic})` : ""}
+              </option>
               {micMissing && (
                 <option value={activeMic}>{activeMic} (desconectado)</option>
               )}

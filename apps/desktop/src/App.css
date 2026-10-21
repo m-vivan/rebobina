@@ -1133,3 +1133,29 @@ code {
   color: var(--muted);
   line-height: 1.4;
 }
+
+.mic-hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--warn);
+}
+
+.mic-hint .link-button {
+  color: var(--warn);
+  font-size: 0.85rem;
+}
+
+.mic-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--sky) 45%, transparent);
+  background: color-mix(in srgb, var(--sky) 12%, transparent);
+  font-size: 0.9rem;
+}

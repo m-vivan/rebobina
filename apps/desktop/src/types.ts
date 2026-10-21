@@ -6,6 +6,25 @@ export interface RecordingStatus {
   paused: boolean;
   /** Segundos gravados, sem contar as pausas. */
   elapsedSec: number;
+  /** Microfone em uso agora. */
+  micName: string | null;
+  /** Seguindo o microfone padrão do macOS. */
+  followSystem: boolean;
+}
+
+export interface MicHints {
+  /** Microfone padrão do macOS. */
+  systemDefault: string | null;
+  /** Microfone aberto por outro app (provavelmente a chamada). */
+  inUseByOtherApp: string | null;
+}
+
+export interface MicSwitched {
+  meetingId: string;
+  from: string | null;
+  to: string;
+  /** "system": o padrão do macOS mudou; "voice": a voz estava em outro microfone. */
+  reason: "system" | "voice";
 }
 
 export interface Meeting {

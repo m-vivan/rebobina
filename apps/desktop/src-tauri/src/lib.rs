@@ -180,30 +180,143 @@ fn start_recording(
     }
 
     let meeting_id = meeting.id.clone();
-    std::thread::spawn(move || {
-        loop {
-            let Some(state) = app.try_state::<AppState>() else {
-                break;
-            };
-            if state.recorder.current_meeting_id().as_deref() != Some(meeting_id.as_str()) {
-                break;
-            }
-            let (mic, system) = state.recorder.take_levels();
-            let _ = app.emit(
-                "recording-level",
-                LevelPayload {
-                    level: mic.max(system),
-                    mic,
-                    system,
-                    meeting_id: meeting_id.clone(),
-                },
-            );
-            drop(state);
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-    });
+    std::thread::spawn(move || watch_recording(app, meeting_id));
 
     Ok(meeting)
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MicSwitchedPayload {
+    meeting_id: String,
+    from: Option<String>,
+    to: String,
+    /// "system": o padrão do macOS mudou; "voice": a voz estava em outro microfone.
+    reason: &'static str,
+}
+
+const LEVEL_TICK: std::time::Duration = std::time::Duration::from_millis(100);
+/// A cada quantos ticks confere se o microfone padrão do sistema mudou (~2 s).
+const FOLLOW_EVERY: u32 = 20;
+
+/// Enquanto a gravação dura: envia os níveis para a tela, acompanha o microfone
+/// padrão do sistema e procura a voz em outro microfone se o atual ficar mudo.
+fn watch_recording(app: AppHandle, meeting_id: String) {
+    let watch = Arc::new(std::sync::Mutex::new(audio::mic_watch::SilenceWatch::default()));
+    let probing = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut tick = 0u32;
+    loop {
+        let Some(state) = app.try_state::<AppState>() else {
+            break;
+        };
+        if state.recorder.current_meeting_id().as_deref() != Some(meeting_id.as_str()) {
+            break;
+        }
+        let (mic, system) = state.recorder.take_levels();
+        let _ = app.emit(
+            "recording-level",
+            LevelPayload {
+                level: mic.max(system),
+                mic,
+                system,
+                meeting_id: meeting_id.clone(),
+            },
+        );
+
+        tick = tick.wrapping_add(1);
+        if tick % FOLLOW_EVERY == 0 {
+            if let Some((from, to)) = state.recorder.follow_system_tick() {
+                watch.lock().unwrap().reset();
+                let _ = app.emit(
+                    "mic-switched",
+                    MicSwitchedPayload { meeting_id: meeting_id.clone(), from, to, reason: "system" },
+                );
+            }
+        }
+
+        let paused = state.recorder.status().is_some_and(|s| s.paused);
+        let should_probe = watch.lock().unwrap().update(
+            mic,
+            system,
+            LEVEL_TICK,
+            paused,
+            std::time::Instant::now(),
+        );
+        if should_probe && !probing.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            let (app, meeting_id, watch, probing) =
+                (app.clone(), meeting_id.clone(), Arc::clone(&watch), Arc::clone(&probing));
+            std::thread::spawn(move || {
+                find_voice_elsewhere(&app, &meeting_id, &watch);
+                probing.store(false, std::sync::atomic::Ordering::SeqCst);
+            });
+        }
+        drop(state);
+        std::thread::sleep(LEVEL_TICK);
+    }
+}
+
+/// Mede por alguns segundos os outros microfones (sem gravar) e troca para o
+/// que tem voz. Começa pelos que algum programa está usando (a chamada).
+fn find_voice_elsewhere(
+    app: &AppHandle,
+    meeting_id: &str,
+    watch: &std::sync::Mutex<audio::mic_watch::SilenceWatch>,
+) {
+    const PROBE_FOR: std::time::Duration = std::time::Duration::from_millis(2500);
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let current = state.recorder.current_mic();
+    drop(state);
+
+    let mut candidates: Vec<audio::devices::InputDeviceState> = audio::devices::input_devices_state()
+        .into_iter()
+        .filter(|d| !audio::devices::is_virtual_input(&d.name) && Some(&d.name) != current.as_ref())
+        .collect();
+    candidates.sort_by_key(|d| (!d.in_use, !d.is_default));
+
+    let mut levels = Vec::new();
+    for device in candidates {
+        if let Some(rms) = audio::probe_input_level(&device.name, PROBE_FOR) {
+            eprintln!("rebobina: voz em {:?}: rms {rms:.4}", device.name);
+            levels.push((device.name, rms));
+        }
+    }
+    let Some(best) = audio::mic_watch::pick_voice(&levels) else {
+        return;
+    };
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    if state.recorder.current_meeting_id().as_deref() != Some(meeting_id) {
+        return;
+    }
+    if let Ok(from) = state.recorder.auto_switch_microphone(&best) {
+        watch.lock().unwrap().reset();
+        let _ = app.emit(
+            "mic-switched",
+            MicSwitchedPayload { meeting_id: meeting_id.to_string(), from, to: best, reason: "voice" },
+        );
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MicHints {
+    /// Microfone padrão do macOS.
+    system_default: Option<String>,
+    /// Microfone real aberto por outro programa (provavelmente a chamada).
+    in_use_by_other_app: Option<String>,
+}
+
+#[tauri::command]
+fn get_mic_hints(state: State<'_, AppState>) -> AppResult<MicHints> {
+    let devices = audio::devices::input_devices_state();
+    let ours = state.recorder.current_mic();
+    Ok(MicHints {
+        system_default: devices.iter().find(|d| d.is_default).map(|d| d.name.clone()),
+        in_use_by_other_app: audio::devices::call_input(&devices, ours.as_deref()),
+    })
 }
 
 // `async`: roda fora da thread principal; abrir um dispositivo de áudio pode demorar.
@@ -420,6 +533,7 @@ pub fn run() {
             retry_processing,
             update_meeting,
             switch_microphone,
+            get_mic_hints,
             pause_recording,
             resume_recording,
             get_recording_status,

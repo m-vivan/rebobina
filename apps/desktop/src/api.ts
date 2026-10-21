@@ -6,6 +6,7 @@ import type {
   BlackHoleStatus,
   DetectedCall,
   Meeting,
+  MicHints,
   RecordingStatus,
   ScreenPermissionStatus,
   Summary,
@@ -39,6 +40,7 @@ export const api = {
   pauseRecording: () => invoke<RecordingStatus>("pause_recording"),
   resumeRecording: () => invoke<RecordingStatus>("resume_recording"),
   getRecordingStatus: () => invoke<RecordingStatus | null>("get_recording_status"),
+  getMicHints: () => invoke<MicHints>("get_mic_hints"),
   switchMicrophone: (deviceName: string | null) =>
     invoke<void>("switch_microphone", { deviceName }),
   retryProcessing: (meetingId: string) =>

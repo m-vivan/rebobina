@@ -263,7 +263,7 @@ export function Settings() {
                 void refreshDevices();
               }}
             >
-              <option value="">Padrão do sistema</option>
+              <option value="">Seguir o sistema</option>
               {devices.map((d) => (
                 <option key={d.name} value={d.name}>
                   {d.name}

@@ -1,3 +1,5 @@
+pub mod devices;
+pub mod mic_watch;
 mod mix;
 pub use mix::mix_mono_wavs;
 mod permissions;
@@ -103,6 +105,10 @@ struct ActiveRecording {
     output_path: PathBuf,
     system_path: PathBuf,
     mic_path: PathBuf,
+    /// Segue o microfone padrão do macOS (troca sozinho quando ele muda).
+    follow_system: bool,
+    /// Microfone em uso agora.
+    mic_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -112,6 +118,10 @@ pub struct RecordingStatus {
     pub paused: bool,
     /// Segundos efetivamente gravados (sem as pausas).
     pub elapsed_sec: u64,
+    /// Microfone em uso agora.
+    pub mic_name: Option<String>,
+    /// Seguindo o microfone padrão do sistema.
+    pub follow_system: bool,
 }
 
 /// Tempo entre `started` e `now`, menos as pausas encerradas e a pausa em curso.
@@ -137,6 +147,8 @@ impl ActiveRecording {
             meeting_id: self.meeting_id.clone(),
             paused: self.paused_at.is_some(),
             elapsed_sec: self.recorded().as_secs(),
+            mic_name: self.mic_name.clone(),
+            follow_system: self.follow_system,
         }
     }
 }
@@ -365,6 +377,8 @@ impl Recorder {
             output_path: output_path.to_path_buf(),
             system_path,
             mic_path,
+            follow_system: device_name.is_none(),
+            mic_name: device_name.map(str::to_string).or_else(default_input_name),
         });
 
         Ok(())
@@ -401,48 +415,53 @@ impl Recorder {
         self.active.lock().as_ref().map(ActiveRecording::status)
     }
 
-    /// Troca o microfone sem interromper a gravação. `None` volta ao padrão do sistema.
+    /// Troca o microfone sem interromper a gravação. `None` passa a seguir o
+    /// microfone padrão do sistema.
     pub fn switch_microphone(&self, device_name: Option<&str>) -> AppResult<()> {
         let mut guard = self.active.lock();
         let active = guard
             .as_mut()
             .ok_or_else(|| AppError::Audio("Nenhuma gravação ativa".into()))?;
-        let shared = Arc::clone(&active.shared);
+        let target = device_name.map(str::to_string).or_else(default_input_name);
+        switch_input(active, target.as_deref(), false)?;
+        active.follow_system = device_name.is_none();
+        Ok(())
+    }
 
-        // Fecha o microfone atual (cpal) e ignora o do SCK enquanto o novo abre.
-        active.mic_stream = None;
-        shared.sck_mic.store(false, Ordering::Relaxed);
+    /// Microfone em uso pela gravação ativa.
+    pub fn current_mic(&self) -> Option<String> {
+        self.active.lock().as_ref().and_then(|a| a.mic_name.clone())
+    }
 
-        let use_sck = active.sck_mic_available
-            && device_name.map_or(true, is_default_input);
-        let result = if use_sck {
-            shared.sck_mic.store(true, Ordering::Relaxed);
-            Ok(())
-        } else {
-            match start_cpal_mic(device_name, Arc::clone(&shared)) {
-                Ok(stream) => {
-                    active.mic_stream = Some(stream);
-                    Ok(())
-                }
-                Err(e) => {
-                    // Melhor continuar com o microfone padrão do que ficar sem voz.
-                    if active.sck_mic_available {
-                        shared.sck_mic.store(true, Ordering::Relaxed);
-                    }
-                    Err(e)
-                }
-            }
-        };
-
-        pad_mic_to_system(&shared);
-        if result.is_ok() {
-            eprintln!(
-                "rebobina: microfone trocado para {} (via {})",
-                device_name.unwrap_or("o padrão do sistema"),
-                if use_sck { "SCK" } else { "cpal" }
-            );
+    /// Seguindo o sistema e o padrão mudou: troca para o novo padrão.
+    /// Devolve (anterior, novo) quando trocou.
+    pub fn follow_system_tick(&self) -> Option<(Option<String>, String)> {
+        let mut guard = self.active.lock();
+        let active = guard.as_mut()?;
+        if !active.follow_system {
+            return None;
         }
-        result
+        let default = default_input_name()?;
+        if active.mic_name.as_deref() == Some(default.as_str()) {
+            return None;
+        }
+        let from = active.mic_name.clone();
+        // O microfone do SCK foi aberto no padrão antigo; o novo vai pelo cpal.
+        switch_input(active, Some(&default), true).ok()?;
+        Some((from, default))
+    }
+
+    /// Troca feita pelo app ao achar a voz em outro microfone. Deixa de seguir
+    /// o sistema, para não voltar sozinho ao microfone mudo.
+    pub fn auto_switch_microphone(&self, name: &str) -> AppResult<Option<String>> {
+        let mut guard = self.active.lock();
+        let active = guard
+            .as_mut()
+            .ok_or_else(|| AppError::Audio("Nenhuma gravação ativa".into()))?;
+        let from = active.mic_name.clone();
+        switch_input(active, Some(name), true)?;
+        active.follow_system = false;
+        Ok(from)
     }
 
     pub fn stop(&self) -> AppResult<(String, PathBuf, i64)> {
@@ -798,6 +817,103 @@ fn downmix_and_resample_f32(
         mono.push(sum / channels as f32);
     }
     resample_linear(&mono, in_rate, out_rate)
+}
+
+/// Abre `name` como microfone da gravação. Usa o microfone do SCK quando ele
+/// é o padrão e `force_cpal` é falso; senão, o cpal.
+fn switch_input(active: &mut ActiveRecording, name: Option<&str>, force_cpal: bool) -> AppResult<()> {
+    let shared = Arc::clone(&active.shared);
+
+    // Fecha o microfone atual (cpal) e ignora o do SCK enquanto o novo abre.
+    active.mic_stream = None;
+    shared.sck_mic.store(false, Ordering::Relaxed);
+
+    let use_sck = !force_cpal && active.sck_mic_available && name.map_or(true, is_default_input);
+    let result = if use_sck {
+        shared.sck_mic.store(true, Ordering::Relaxed);
+        Ok(())
+    } else {
+        match start_cpal_mic(name, Arc::clone(&shared)) {
+            Ok(stream) => {
+                active.mic_stream = Some(stream);
+                Ok(())
+            }
+            Err(e) => {
+                // Melhor continuar com o microfone padrão do que ficar sem voz.
+                if active.sck_mic_available {
+                    shared.sck_mic.store(true, Ordering::Relaxed);
+                }
+                Err(e)
+            }
+        }
+    };
+
+    pad_mic_to_system(&shared);
+    if result.is_ok() {
+        active.mic_name = name.map(str::to_string).or_else(default_input_name);
+        eprintln!(
+            "rebobina: microfone trocado para {} (via {})",
+            name.unwrap_or("o padrão do sistema"),
+            if use_sck { "SCK" } else { "cpal" }
+        );
+    }
+    result
+}
+
+/// Nome do microfone padrão do sistema.
+pub fn default_input_name() -> Option<String> {
+    cpal::default_host()
+        .default_input_device()
+        .and_then(|d| d.name().ok())
+}
+
+/// Volume (RMS) que chega a um microfone durante `duration`, sem gravar.
+/// Usado para descobrir em qual microfone a pessoa está falando.
+pub fn probe_input_level(name: &str, duration: Duration) -> Option<f32> {
+    let host = cpal::default_host();
+    let device = host
+        .input_devices()
+        .ok()?
+        .find(|d| d.name().ok().as_deref() == Some(name))?;
+    let config = device.default_input_config().ok()?;
+    let acc = Arc::new(Mutex::new((0f64, 0u64)));
+    let acc_cb = Arc::clone(&acc);
+    let stream_config: cpal::StreamConfig = config.clone().into();
+    let stream = match config.sample_format() {
+        SampleFormat::F32 => device.build_input_stream(
+            &stream_config,
+            move |data: &[f32], _| {
+                let mut a = acc_cb.lock();
+                a.0 += data.iter().map(|&s| (s as f64) * (s as f64)).sum::<f64>();
+                a.1 += data.len() as u64;
+            },
+            |_| {},
+            None,
+        ),
+        SampleFormat::I16 => device.build_input_stream(
+            &stream_config,
+            move |data: &[i16], _| {
+                let mut a = acc_cb.lock();
+                a.0 += data
+                    .iter()
+                    .map(|&s| {
+                        let f = s as f64 / i16::MAX as f64;
+                        f * f
+                    })
+                    .sum::<f64>();
+                a.1 += data.len() as u64;
+            },
+            |_| {},
+            None,
+        ),
+        _ => return None,
+    }
+    .ok()?;
+    stream.play().ok()?;
+    std::thread::sleep(duration);
+    drop(stream);
+    let (sum, n) = *acc.lock();
+    (n > 0).then(|| (sum / n as f64).sqrt() as f32)
 }
 
 /// Se o nome é o microfone padrão do sistema (o que o SCK captura).
